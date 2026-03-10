@@ -35,7 +35,10 @@
 ```bash
 # 复制整个目录到 skills 目录
 mkdir -p ~/.claude/skills/vico-edit
-cp -r SKILL.md vico_tools.py vico_editor.py README.md ~/.claude/skills/vico-edit/
+cp -r SKILL.md vico_tools.py vico_editor.py README.md requirements.txt ~/.claude/skills/vico-edit/
+
+# 安装依赖
+cd ~/.claude/skills/vico-edit && pip install -r requirements.txt
 ```
 
 ## 使用方法
@@ -136,6 +139,24 @@ export VOLCENGINE_TTS_ACCESS_TOKEN="your-token"
 - FFmpeg 6.0+（视频处理）
 - Python 3.9+（工具运行）
 - httpx（HTTP 客户端）
+
+## 更新日志
+
+### v1.1.0 (2026-03-10)
+- 🐛 修复Suno API `Please enter callBackUrl` 错误，添加缺失的callbackUrl参数
+- ✨ 支持Suno V3.5/V4.5模型切换，默认使用更快的V3.5模型
+- ✨ 新增requirements.txt依赖管理
+- ✨ 优化音乐生成超时处理，提高成功率
+- ✨ 完善音频混合功能，自动循环背景音乐匹配视频时长
+
+### v1.0.0 (2026-03-01)
+- 🎉 初始版本发布
+- ✨ 支持Vidu图生视频/文生视频
+- ✨ 支持Suno音乐生成
+- ✨ 支持火山引擎TTS语音合成
+- ✨ 支持Gemini图片生成
+- ✨ 完整的视频剪辑功能（拼接、转场、调色、音频混合等）
+- ✨ 自动项目管理和工作流
 
 ## License
 
