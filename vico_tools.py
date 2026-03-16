@@ -554,23 +554,47 @@ class ImageClient:
         prompt: str,
         output: str = None,
         style: str = "cinematic",
-        aspect_ratio: str = "9:16"
+        aspect_ratio: str = "9:16",
+        reference_images: List[str] = None
     ) -> Dict[str, Any]:
-        """生成图片"""
+        """生成图片，支持多参考图"""
         import httpx
 
         style_suffix = self.STYLE_PRESETS.get(style, style)
         full_prompt = f"{prompt}, {style_suffix}"
 
+        # 构建 parts 数组
+        parts = []
+
+        # 添加参考图（Gemini 对最后的参考图给更多权重，所以重要人物放后面）
+        if reference_images:
+            for ref_path in reference_images:
+                if os.path.exists(ref_path):
+                    with open(ref_path, 'rb') as f:
+                        img_data = f.read()
+                    ext = os.path.splitext(ref_path)[1].lower()
+                    mime_map = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp'}
+                    mime_type = mime_map.get(ext, 'image/jpeg')
+                    parts.append({
+                        "inlineData": {
+                            "mimeType": mime_type,
+                            "data": base64.b64encode(img_data).decode('utf-8')
+                        }
+                    })
+
+        # 添加文本 prompt
+        parts.append({"text": full_prompt})
+
         payload = {
-            "contents": [{"parts": [{"text": full_prompt}]}],
+            "contents": [{"parts": parts}],
             "generationConfig": {
                 "responseModalities": ["IMAGE", "TEXT"],
                 "responseMimeType": "text/plain",
             }
         }
 
-        logger.info(f"📤 图片生成: {prompt[:30]}...")
+        ref_info = f" (with {len(reference_images)} reference images)" if reference_images else ""
+        logger.info(f"📤 图片生成{ref_info}: {prompt[:30]}...")
 
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
@@ -779,6 +803,220 @@ class PersonaManager:
         self._save()
 
 
+# ============== 多模态图片分析（内置 Vision 能力）==============
+
+class VisionClient:
+    """
+    多模态图片分析客户端
+
+    用于非多模态模型的 fallback，支持 Kimi K2.5、GPT-4o 等视觉模型。
+    使用 Anthropic API 兼容格式。
+
+    使用方式：
+        client = VisionClient()
+        result = await client.analyze_image("path/to/image.jpg", "描述这张图片")
+        results = await client.analyze_batch(["img1.jpg", "img2.jpg"])
+    """
+
+    # 支持的图片格式
+    SUPPORTED_FORMATS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+
+    def __init__(self):
+        import httpx
+        self.client = httpx.AsyncClient(timeout=60.0)
+
+    async def analyze_image(
+        self,
+        image_path: str,
+        prompt: str = "请详细描述这张图片的内容，包括场景、主体、颜色、氛围等。",
+    ) -> Dict[str, Any]:
+        """分析单张图片"""
+        if not os.path.exists(image_path):
+            return {"success": False, "error": f"图片不存在: {image_path}"}
+
+        # 读取并编码图片
+        with open(image_path, 'rb') as f:
+            image_data = f.read()
+
+        ext = os.path.splitext(image_path)[1].lower()
+        mime_map = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.bmp': 'image/bmp'
+        }
+        media_type = mime_map.get(ext, 'image/jpeg')
+
+        base64_image = base64.b64encode(image_data).decode('utf-8')
+
+        # 获取配置
+        api_key = Config.get("VISION_API_KEY", "")
+        base_url = Config.get("VISION_BASE_URL", "https://coding.dashscope.aliyuncs.com/apps/anthropic")
+        model = Config.get("VISION_MODEL", "kimi-k2.5")
+
+        if not api_key:
+            return {"success": False, "error": "VISION_API_KEY 未配置"}
+
+        # 构建 API 请求（Anthropic API 兼容格式）
+        payload = {
+            "model": model,
+            "max_tokens": 1024,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": base64_image
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": prompt
+                        }
+                    ]
+                }
+            ]
+        }
+
+        try:
+            response = await self.client.post(
+                f"{base_url}/v1/messages",
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01"
+                },
+                json=payload
+            )
+
+            if response.status_code != 200:
+                error_text = response.text
+                return {
+                    "success": False,
+                    "error": f"API error {response.status_code}: {error_text[:200]}"
+                }
+
+            result = response.json()
+
+            # 提取响应文本
+            content = result.get("content", [])
+            description = None
+            for item in content:
+                if item.get("type") == "text":
+                    description = item.get("text", "")
+                    break
+
+            if not description:
+                description = "无法解析响应"
+
+            return {
+                "success": True,
+                "image_path": image_path,
+                "description": description
+            }
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def analyze_batch(
+        self,
+        image_paths: List[str],
+        prompt: str = "请详细描述这张图片的内容，包括场景、主体、颜色、氛围等。"
+    ) -> List[Dict[str, Any]]:
+        """批量分析多张图片"""
+        results = []
+        for path in image_paths:
+            result = await self.analyze_image(path, prompt)
+            results.append(result)
+        return results
+
+    async def close(self):
+        await self.client.aclose()
+
+
+# ============== 命令行入口 ==============
+
+async def cmd_vision(args):
+    """图片分析命令"""
+    api_key = Config.get("VISION_API_KEY", "")
+    if not api_key:
+        print(json.dumps({
+            "success": False,
+            "error": "VISION_API_KEY 未配置",
+            "hint": "请在 config.json 中添加 VISION_API_KEY",
+            "config_file": str(CONFIG_FILE)
+        }, indent=2, ensure_ascii=False))
+        return 1
+
+    client = VisionClient()
+    try:
+        if args.batch:
+            # 批量分析目录
+            directory = Path(args.image)
+            if not directory.is_dir():
+                print(json.dumps({
+                    "success": False,
+                    "error": f"目录不存在: {args.image}"
+                }, indent=2, ensure_ascii=False))
+                return 1
+
+            image_files = []
+            for ext in VisionClient.SUPPORTED_FORMATS:
+                image_files.extend(directory.glob(f"*{ext}"))
+                image_files.extend(directory.glob(f"*{ext.upper()}"))
+
+            if not image_files:
+                print(json.dumps({
+                    "success": False,
+                    "error": f"目录中没有找到图片文件: {args.image}"
+                }, indent=2, ensure_ascii=False))
+                return 1
+
+            logger.info(f"找到 {len(image_files)} 张图片，开始分析...")
+            results = await client.analyze_batch(
+                [str(f) for f in sorted(image_files)],
+                args.prompt
+            )
+
+            output = {"success": True, "total": len(results), "results": []}
+            for r in results:
+                if r.get("success"):
+                    output["results"].append({
+                        "image": r.get("image_path"),
+                        "description": r.get("description")
+                    })
+                else:
+                    output["results"].append({
+                        "image": r.get("image_path", "unknown"),
+                        "error": r.get("error")
+                    })
+
+            print(json.dumps(output, indent=2, ensure_ascii=False))
+            return 0
+        else:
+            # 单张图片分析
+            result = await client.analyze_image(args.image, args.prompt)
+            if result.get("success"):
+                output = {
+                    "success": True,
+                    "image": args.image,
+                    "analysis": result.get("description")
+                }
+                print(json.dumps(output, indent=2, ensure_ascii=False))
+                return 0
+            else:
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+                return 1
+    finally:
+        await client.close()
+
+
 # ============== 命令行入口 ==============
 
 async def cmd_video(args):
@@ -896,7 +1134,8 @@ async def cmd_image(args):
         prompt=args.prompt,
         output=args.output,
         style=args.style,
-        aspect_ratio=args.aspect_ratio
+        aspect_ratio=args.aspect_ratio,
+        reference_images=args.reference
     )
 
     if result.get("success"):
@@ -1035,6 +1274,13 @@ def main():
     image_parser.add_argument("--style", "-s", default="cinematic",
                               help="风格（自由文本，如 cinematic, watercolor illustration 等）")
     image_parser.add_argument("--aspect-ratio", "-a", default="9:16", help="宽高比")
+    image_parser.add_argument("--reference", "-r", nargs="+", help="参考图路径（支持多个，重要人物放后面）")
+
+    # vision 子命令（内置多模态分析）
+    vision_parser = subparsers.add_parser("vision", help="分析图片内容")
+    vision_parser.add_argument("image", help="图片路径或目录")
+    vision_parser.add_argument("--batch", "-b", action="store_true", help="批量分析目录中的图片")
+    vision_parser.add_argument("--prompt", "-p", default="请详细描述这张图片的内容，包括场景、主体、颜色、氛围等。", help="分析提示词")
 
     args = parser.parse_args()
 
@@ -1049,6 +1295,7 @@ def main():
         "music": cmd_music,
         "tts": cmd_tts,
         "image": cmd_image,
+        "vision": cmd_vision,
     }
 
     return asyncio.run(commands[args.command](args))

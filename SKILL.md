@@ -12,6 +12,30 @@ argument-hint: <素材目录或视频文件>
 
 ---
 
+## 推荐配置
+
+**建议使用多模态模型**（如 Claude Opus/Sonnet/Kimi-K2.5）以获得最佳体验。
+
+非多模态模型会自动调用视觉模型进行图片分析。在 `config.json` 中配置：
+
+```json
+{
+  "VISION_BASE_URL": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+  "VISION_MODEL": "kimi-k2.5",
+  "VISION_API_KEY": "your-api-key"
+}
+```
+
+**支持的视觉模型**：Kimi-K2.5、GPT-4o、GLM-4V 等兼容 Anthropic API 格式的模型。
+
+| 提供商 | VISION_BASE_URL | VISION_MODEL |
+|--------|-----------------|--------------|
+| Kimi (阿里云) | `https://coding.dashscope.aliyuncs.com/apps/anthropic` | `kimi-k2.5` |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o` |
+| 智谱 | `https://open.bigmodel.cn/api/paas/v4` | `glm-4v` |
+
+---
+
 ## 核心理念
 
 - **我就是 Director Agent** - 理解意图、规划流程、执行创作
@@ -73,9 +97,29 @@ python ~/.claude/skills/vico-edit/vico_tools.py check
 - 情感基调（温馨/动感/宁静/神秘等）
 - 颜色风格（明亮/暗调/冷暖色调等）
 
-**Step 2: 视觉分析失败时的 Fallback**
+**Step 2: 视觉分析失败时调用内置 VisionClient**
 
-如果 Read 工具无法获取图片内容，**主动询问用户**：
+如果 Read 工具无法获取图片内容，**调用内置 VisionClient**：
+
+```python
+from vico_tools import VisionClient
+
+client = VisionClient()
+# 批量分析图片
+results = await client.analyze_batch(
+    image_paths,
+    "分析这些素材：场景、主体、颜色、氛围"
+)
+
+for result in results:
+    if result["success"]:
+        print(f"图片: {result['image_path']}")
+        print(f"描述: {result['description']}")
+```
+
+**Step 3: VisionClient 也失败时询问用户**
+
+如果 VisionClient 也无法分析（如 VISION_API_KEY 未配置），**主动询问用户**：
 
 ```
 我无法直接识别这些素材的内容。请帮我简单描述一下：
@@ -95,19 +139,24 @@ python ~/.claude/skills/vico-edit/vico_tools.py check
 **触发条件**：用户明确提供了**人物肖像图**作为参考素材。
 
 **判断标准**：
-- 肖像图：图片主体是人物面部/上半身特写，用于保持人物一致性
+- 肖像图：图片主体是人物面部/上半身，用于保持人物一致性
 - 非肖像图：风景、物品、街景（即使背景有路人）
 
 **仅当素材是肖像图时执行：**
 
-1. 使用 Read 工具查看图片**内容**（不看文件名）
-2. 识别：性别、外貌特征
-3. 询问用户确认人物身份（名字、在视频中的角色）
-4. 使用 PersonaManager 记录：
+1. 使用 Read 工具或 VisionClient 查看图片**内容**（不看文件名）
+2. 识别图片中的**所有人物**：
+   - 人物数量（一张照片可能有多人）
+   - 每个人的性别、外貌特征
+3. 询问用户确认每个人物的身份（名字、在视频中的角色）
+4. 使用 PersonaManager **分别为每个人物**注册：
    ```python
    from vico_tools import PersonaManager
    manager = PersonaManager(project_dir)
-   manager.register("小美", "female", "path/to/ref.jpg", "长发、圆脸、戴眼镜")
+   # 如果照片里是夫妻两人，分别注册
+   manager.register("爸爸", "male", "path/to/ref.jpg", "短发、圆脸、戴眼镜")
+   manager.register("妈妈", "female", "path/to/ref.jpg", "长发、瓜子脸")
+   # 注意：同一张参考图可以注册多个人物
    ```
 
 **不触发的情况：**
@@ -175,24 +224,55 @@ python ~/.claude/skills/vico-edit/vico_tools.py check
 
 **仅当已注册人物参考图时考虑：**
 
-1. **单人镜头**：直接使用该人物的参考图做 img2video
-   ```bash
-   python vico_tools.py video --image <参考图> --prompt "Camera slowly pushes in..."
-   ```
+⚠️ **重要原则**：用户给的参考图是**样貌参考图**，只取人物面部/体态特征，**不能直接做 img2video 的首帧**！
 
-2. **双人镜头**：
-   - 先用 Gemini 多参考图生成合成图片
-   - 再用 image2video 生成视频
-   - **注意**：参考图顺序很重要，重要人物放后面（Gemini对最后输入的参考图给更多权重）
+原因：参考图里的场景、服饰、姿态都是干扰，直接用会把乱七八糟的背景带进视频。
 
-   Prompt 示例：
-   ```
-   Reference for WOMAN (小美): MUST preserve exact appearance - long hair, round face, glasses
-   Reference for MAN (小明): MUST preserve exact appearance - short hair, beard
-   A couple drinking coffee together at a cozy cafe, warm lighting
-   ```
+#### 正确流程：
 
-3. **无人镜头**（风景、物品）：直接 text2video
+**1. 单人镜头**：
+```
+参考图 → Gemini 生成干净的人物图 → img2video
+```
+- 用 Gemini 基于参考图生成一张"干净"的人物图（指定场景、服饰、姿态）
+- 然后用这张干净图做 img2video
+
+```bash
+# Step 1: 生成干净人物图
+python vico_tools.py image --prompt "A young woman standing in a cozy cafe, warm lighting, casual outfit, natural pose" --reference <参考图> --output clean_character.png
+
+# Step 2: 图生视频
+python vico_tools.py video --image clean_character.png --prompt "Camera slowly pushes in..." --output shot.mp4
+```
+
+**2. 双人/多人镜头**：
+```
+多个参考图 → Gemini 多参考图合成 → img2video
+```
+- 先用 Gemini 将多个人物合成到同一张图
+- **注意**：参考图顺序很重要，重要人物放后面（Gemini对最后输入的参考图给更多权重）
+
+Prompt 示例：
+```
+Reference for WOMAN (妈妈): MUST preserve exact appearance - long hair, round face
+Reference for MAN (爸爸): MUST preserve exact appearance - short hair, glasses
+A young Chinese couple walking together on a 1990s street, warm golden lighting, nostalgic film quality
+```
+
+**3. 无人镜头**（风景、物品、场景）：
+
+两种方式都可行，灵活选择：
+- **方式A**：直接 text2video
+- **方式B**：先生成场景图 → 再 img2video（质量更可控）
+
+```bash
+# 方式A：直接文生视频
+python vico_tools.py video --prompt "A nostalgic 1990s Chinese street, golden afternoon light" --output shot.mp4
+
+# 方式B：先生图再转视频（推荐用于重要场景）
+python vico_tools.py image --prompt "A nostalgic 1990s Chinese street, golden afternoon light" --output scene.png
+python vico_tools.py video --image scene.png --prompt "Camera pans slowly across the street" --output shot.mp4
+```
 
 **如果没有注册人物参考图，跳过此步骤。**
 
@@ -321,6 +401,10 @@ python ~/.claude/skills/vico-edit/vico_tools.py tts --text <文本> --voice <音
 
 # 图片生成
 python ~/.claude/skills/vico-edit/vico_tools.py image --prompt <描述> --style <风格> --output <输出>
+
+# 图片分析（内置多模态能力）
+python ~/.claude/skills/vico-edit/vico_tools.py vision <图片路径> [--prompt "分析提示词"]
+python ~/.claude/skills/vico-edit/vico_tools.py vision <目录路径> --batch [--prompt "分析提示词"]
 ```
 
 ### vico_editor.py - 剪辑工具
@@ -346,6 +430,9 @@ python ~/.claude/skills/vico-edit/vico_editor.py color --video <视频> --preset
 | SUNO_API_KEY | Suno 音乐生成 | 生成 BGM 时 |
 | VOLCENGINE_TTS_APP_ID | 火山引擎 TTS | 生成旁白时 |
 | VOLCENGINE_TTS_ACCESS_TOKEN | 火山引擎 TTS | 生成旁白时 |
+| VISION_API_KEY | 内置视觉分析（非多模态模型 fallback） | Read 工具无法识别图片时 |
+| VISION_BASE_URL | 视觉模型 API 地址 | 自定义视觉模型时 |
+| VISION_MODEL | 视觉模型名称 | 自定义视觉模型时 |
 
 ---
 
@@ -374,7 +461,7 @@ python ~/.claude/skills/vico-edit/vico_editor.py color --video <视频> --preset
 
 | 问题 | 处理方式 |
 |------|---------|
-| 视觉分析失败 | 询问用户描述素材内容 |
+| 视觉分析失败 | 调用内置 VisionClient，失败则询问用户描述素材内容 |
 | API key 未配置 | 首次调用时询问用户 |
 | API 调用失败 | 重试 2 次，失败后询问用户 |
 | 视频生成失败 | 尝试其他生成模式或使用原始素材 |
@@ -392,11 +479,27 @@ python ~/.claude/skills/vico-edit/vico_editor.py color --video <视频> --preset
 
 ## 关键经验总结
 
+### 参考图使用原则（最重要）
+
+⚠️ **用户给的参考图是样貌参考图，不能直接做 img2video 首帧！**
+
+**正确流程**：参考图 → Gemini 生成干净人物图（指定场景/服饰/姿态）→ img2video
+
+**原因**：参考图里的场景、服饰、姿态都是干扰，直接用会把乱七八糟的背景带进虚构叙事视频。
+
 ### Gemini 多参考图注意事项
 
 1. **参考图顺序很重要**：重要人物放后面，Gemini 对最后输入的参考图给更多权重
 2. **Prompt 要明确**：使用 `Reference for WOMAN (name): MUST preserve exact appearance`
-3. **单人镜头用单参考图**，双人镜头先生成合成图片再转视频
+3. **单人镜头**：先用参考图生成干净人物图，再转视频
+4. **双人/多人镜头**：先用 Gemini 多参考图合成一张干净的场景图，再转视频
+
+### 人物识别注意事项
+
+1. 一张照片里可能有**多个人物**，需要分别识别和注册
+2. 读取图片**内容**，不看文件名
+3. 分别提取每个人物的：性别、外貌特征
+4. 记录到 personas.json
 
 ### 视频生成参数
 
@@ -404,19 +507,10 @@ python ~/.claude/skills/vico-edit/vico_editor.py color --video <视频> --preset
 - image2video 返回：716x1284（可能不一致）
 - **必须在拼接前统一分辨率**（已自动处理）
 
-### 人物识别流程
+### 无人镜头生成方式（灵活）
 
-1. 读取图片**内容**，不看文件名
-2. 识别：人物数量、性别、外貌特征
-3. 确认主角：谁会跨场景出现
-4. 记录到 personas.json（仅当有人物时）
+两种方式可选：
+- **text2video**：快速，适合简单场景
+- **先生图再 img2video**：质量更可控，适合重要场景
 
-### 功能触发条件
-
-| 功能 | 适用场景 | 触发条件 |
-|------|---------|---------|
-| 视频参数校验 | 所有视频 | 拼接前自动执行 |
-| PersonaManager | 人物视频 | 素材中有肖像图时 / 分镜有人物场景时 |
-| 人物识别流程 | 人物视频 | 检测到人物参考图时 |
-
-**风景/物品/动物视频**：只使用视频校验功能，完全不涉及人物管理模块。
+根据实际需求选择，不是固定的。
