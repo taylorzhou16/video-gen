@@ -2,6 +2,7 @@
 *.key
 .env
 .env.*
+config.json
 
 # Generated files
 generated/

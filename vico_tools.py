@@ -102,6 +102,18 @@ class Config:
 
     GEMINI_IMAGE_URL: str = "https://yunwu.ai/v1beta/models/gemini-3.1-flash-image-preview:generateContent"
 
+    # Kling API
+    @property
+    def KLING_ACCESS_KEY(self) -> str:
+        return self.get("KLING_ACCESS_KEY", "")
+
+    @property
+    def KLING_SECRET_KEY(self) -> str:
+        return self.get("KLING_SECRET_KEY", "")
+
+    KLING_BASE_URL: str = "https://api-beijing.klingai.com"
+    KLING_MODEL: str = "kling-v3"  # kling-v3 (v3-omni) 或 kling-v1-5 或 kling-v1
+
 
 Config = Config()
 
@@ -323,7 +335,307 @@ class ViduClient:
         await self.client.aclose()
 
 
-# ============== Suno 音乐生成 ==============
+# ============== Kling 视频生成 ==============
+
+class KlingClient:
+    """
+    Kling 视频生成客户端 (kling-v3-omni)
+
+    功能特点：
+    - 文生视频（3-15秒）
+    - 图生视频
+    - 多镜头视频（multi_shot）
+    - 音画同出（sound: on/off）
+    """
+
+    TEXT2VIDEO_PATH = "/v1/videos/text2video"
+    IMAGE2VIDEO_PATH = "/v1/videos/image2video"
+    QUERY_PATH = "/v1/videos/text2video/{task_id}"
+
+    DEFAULT_MODEL = "kling-v3-omni"
+
+    def __init__(self):
+        import httpx
+        self.client = httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0, connect=10.0),
+            headers={
+                "Content-Type": "application/json",
+            }
+        )
+        self._token = None
+        self._token_expire = 0
+
+    def _generate_token(self) -> str:
+        """生成 JWT 认证 token"""
+        import jwt
+        import time
+
+        now = int(time.time())
+        payload = {
+            "iss": Config.KLING_ACCESS_KEY,
+            "iat": now,
+            "exp": now + 3600,
+            "nbf": now - 5
+        }
+        return jwt.encode(payload, Config.KLING_SECRET_KEY, algorithm="HS256")
+
+    def _get_token(self) -> str:
+        """获取有效的 token（带缓存）"""
+        import time
+        if not self._token or time.time() > self._token_expire - 60:
+            self._token = self._generate_token()
+            self._token_expire = time.time() + 3600
+        return self._token
+
+    async def create_text2video(
+        self,
+        prompt: str,
+        duration: int = 5,
+        mode: str = "std",
+        aspect_ratio: str = "16:9",
+        sound: str = "on",
+        multi_shot: bool = False,
+        shot_type: str = None,
+        multi_prompt: List[Dict] = None,
+        output: str = None
+    ) -> Dict[str, Any]:
+        """
+        文生视频
+
+        Args:
+            prompt: 视频描述
+            duration: 时长（3-15秒）
+            mode: std 或 pro
+            aspect_ratio: 宽高比 (16:9, 9:16, 1:1)
+            sound: on 或 off
+            multi_shot: 是否多镜头
+            shot_type: intelligence（AI自动分镜）或 customize（自定义分镜）
+            multi_prompt: 自定义分镜的镜头列表，格式 [{"index": 1, "prompt": "...", "duration": "3"}, ...]
+            output: 输出文件路径
+        """
+        payload = {
+            "model_name": Config.KLING_MODEL,
+            "prompt": prompt,
+            "negative_prompt": "",
+            "duration": str(duration),
+            "mode": mode,
+            "sound": sound,
+            "aspect_ratio": aspect_ratio
+        }
+
+        if multi_shot:
+            payload["multi_shot"] = True
+            if shot_type:
+                payload["shot_type"] = shot_type
+            if multi_prompt and shot_type == "customize":
+                payload["multi_prompt"] = multi_prompt
+
+        logger.info(f"📤 创建 Kling 文生视频任务: {prompt[:50]}...")
+
+        try:
+            token = self._get_token()
+            response = await self.client.post(
+                f"{Config.KLING_BASE_URL}{self.TEXT2VIDEO_PATH}",
+                json=payload,
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            code = result.get("code")
+            if code != 0:
+                return {"success": False, "error": result.get("message", f"API error: {code}")}
+
+            data = result.get("data", {})
+            task_id = data.get("task_id")
+            if not task_id:
+                return {"success": False, "error": "API未返回task_id"}
+
+            logger.info(f"✅ 任务已创建: {task_id}")
+
+            video_url = await self._wait_for_completion(task_id)
+
+            if video_url and output:
+                await self._download_file(video_url, output)
+                return {"success": True, "video_url": video_url, "output": output, "task_id": task_id}
+
+            return {"success": True, "video_url": video_url, "task_id": task_id}
+
+        except Exception as e:
+            error_msg = str(e)
+            if "429" in error_msg:
+                error_msg = "并发任务数超限，请等待现有任务完成后再试"
+            elif "1201" in error_msg:
+                error_msg = "模型不支持或参数错误，请检查 model_name 和 mode 参数"
+            logger.error(f"❌ Kling 文生视频失败: {error_msg}")
+            return {"success": False, "error": error_msg}
+
+    async def create_image2video(
+        self,
+        image_path: str,
+        prompt: str,
+        duration: int = 5,
+        mode: str = "std",
+        sound: str = "on",
+        output: str = None
+    ) -> Dict[str, Any]:
+        """
+        图生视频
+
+        Args:
+            image_path: 图片路径或URL
+            prompt: 视频描述
+            duration: 时长（3-15秒）
+            mode: std 或 pro
+            sound: on 或 off
+            output: 输出文件路径
+        """
+        # 准备图片
+        if image_path.startswith(('http://', 'https://')):
+            image_url = image_path
+        else:
+            if not os.path.exists(image_path):
+                return {"success": False, "error": f"图片不存在: {image_path}"}
+
+            # Kling API 需要上传图片获取 URL
+            # 这里简化处理，使用 base64 data URL
+            with open(image_path, 'rb') as f:
+                image_data = f.read()
+
+            ext = os.path.splitext(image_path)[1].lower()
+            # HEIC/HEIF 需要先转换
+            if ext in ['.heic', '.heif']:
+                import subprocess
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                    tmp_path = tmp.name
+                subprocess.run(['ffmpeg', '-i', image_path, '-q:v', '2', tmp_path, '-y'],
+                              capture_output=True, check=True)
+                with open(tmp_path, 'rb') as f:
+                    image_data = f.read()
+                os.unlink(tmp_path)
+                ext = '.jpg'
+
+            mime_map = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                       '.webp': 'image/webp', '.heic': 'image/jpeg', '.heif': 'image/jpeg'}
+            mime_type = mime_map.get(ext, 'image/jpeg')
+            image_url = f"data:{mime_type};base64,{base64.b64encode(image_data).decode('utf-8')}"
+
+        payload = {
+            "model_name": Config.KLING_MODEL,
+            "image": image_url,
+            "prompt": prompt,
+            "negative_prompt": "",
+            "duration": str(duration),
+            "mode": mode,
+            "sound": sound
+        }
+
+        logger.info(f"📤 创建 Kling 图生视频任务: {prompt[:50]}...")
+
+        try:
+            token = self._get_token()
+            response = await self.client.post(
+                f"{Config.KLING_BASE_URL}{self.IMAGE2VIDEO_PATH}",
+                json=payload,
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            code = result.get("code")
+            if code != 0:
+                return {"success": False, "error": result.get("message", f"API error: {code}")}
+
+            data = result.get("data", {})
+            task_id = data.get("task_id")
+            if not task_id:
+                return {"success": False, "error": "API未返回task_id"}
+
+            logger.info(f"✅ 任务已创建: {task_id}")
+
+            video_url = await self._wait_for_completion(task_id)
+
+            if video_url and output:
+                await self._download_file(video_url, output)
+                return {"success": True, "video_url": video_url, "output": output, "task_id": task_id}
+
+            return {"success": True, "video_url": video_url, "task_id": task_id}
+
+        except Exception as e:
+            error_msg = str(e)
+            if "429" in error_msg:
+                error_msg = "并发任务数超限，请等待现有任务完成后再试"
+            elif "1201" in error_msg:
+                error_msg = "模型不支持或参数错误，请检查 model_name 和 mode 参数"
+            logger.error(f"❌ Kling 图生视频失败: {error_msg}")
+            return {"success": False, "error": error_msg}
+
+    async def _wait_for_completion(self, task_id: str, max_wait: int = 600) -> Optional[str]:
+        """等待任务完成"""
+        import time
+        start_time = time.monotonic()
+
+        logger.info(f"⏳ 等待 Kling 任务完成: {task_id}")
+
+        while True:
+            elapsed = time.monotonic() - start_time
+            if elapsed > max_wait:
+                logger.error(f"❌ 任务超时 ({max_wait}秒)")
+                return None
+
+            try:
+                token = self._get_token()
+                response = await self.client.get(
+                    f"{Config.KLING_BASE_URL}{self.QUERY_PATH.format(task_id=task_id)}",
+                    headers={"Authorization": f"Bearer {token}"}
+                )
+                response.raise_for_status()
+                result = response.json()
+
+                code = result.get("code")
+                if code != 0:
+                    logger.warning(f"⚠️ 查询失败: {result.get('message')}")
+                    await asyncio.sleep(5)
+                    continue
+
+                data = result.get("data", {})
+                task_status = data.get("task_status")
+
+                # Kling 状态: submitted, processing, succeed, failed
+                if task_status == "succeed":
+                    task_result = data.get("task_result", {})
+                    videos = task_result.get("videos", [])
+                    if videos:
+                        video_url = videos[0].get("url")
+                        logger.info(f"✅ Kling 任务完成 (耗时: {int(elapsed)}秒)")
+                        return video_url
+
+                elif task_status == "failed":
+                    task_status_msg = data.get("task_status_msg", "Unknown error")
+                    logger.error(f"❌ Kling 任务失败: {task_status_msg}")
+                    return None
+
+                await asyncio.sleep(5)
+
+            except Exception as e:
+                logger.warning(f"⚠️ 查询失败: {e}")
+                await asyncio.sleep(5)
+
+    async def _download_file(self, url: str, output_path: str):
+        """下载文件"""
+        import httpx
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            with open(output_path, 'wb') as f:
+                f.write(response.content)
+        logger.info(f"✅ 已保存到: {output_path}")
+
+    async def close(self):
+        await self.client.aclose()
 
 class SunoClient:
     """Suno 音乐生成客户端"""
@@ -1021,43 +1333,92 @@ async def cmd_vision(args):
 
 async def cmd_video(args):
     """视频生成命令"""
-    if not Config.YUNWU_API_KEY:
-        print(json.dumps({
-            "success": False,
-            "error": "YUNWU_API_KEY 未配置",
-            "hint": "请设置环境变量: export YUNWU_API_KEY='your-api-key'",
-            "get_key": "访问 https://yunwu.ai 注册获取 API key"
-        }, indent=2, ensure_ascii=False))
-        return 1
+    backend = getattr(args, 'backend', 'vidu')
 
-    client = ViduClient()
-    try:
-        if args.image:
-            result = await client.create_img2video(
-                image_path=args.image,
-                prompt=args.prompt,
-                duration=args.duration,
-                resolution=args.resolution,
-                audio=args.audio,
-                output=args.output
-            )
-        else:
-            result = await client.create_text2video(
-                prompt=args.prompt,
-                duration=args.duration,
-                aspect_ratio=args.aspect_ratio,
-                audio=args.audio,
-                output=args.output
-            )
-
-        if result.get("success"):
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-            return 0
-        else:
-            print(f"错误: {result.get('error')}")
+    # 检查对应后端的 API key
+    if backend == 'kling':
+        if not Config.KLING_ACCESS_KEY or not Config.KLING_SECRET_KEY:
+            print(json.dumps({
+                "success": False,
+                "error": "Kling API 凭证未配置",
+                "hint": "请在 config.json 中添加 KLING_ACCESS_KEY 和 KLING_SECRET_KEY",
+                "get_key": "访问 https://klingai.kuaishou.com 获取 API 凭证"
+            }, indent=2, ensure_ascii=False))
             return 1
-    finally:
-        await client.close()
+
+        client = KlingClient()
+        try:
+            # Kling 参数转换：audio -> sound
+            sound = "on" if args.audio else "off"
+            # Kling 时长范围：3-15s
+            duration = max(3, min(15, args.duration))
+
+            if args.image:
+                result = await client.create_image2video(
+                    image_path=args.image,
+                    prompt=args.prompt,
+                    duration=duration,
+                    mode=args.mode if hasattr(args, 'mode') else "std",
+                    sound=sound,
+                    output=args.output
+                )
+            else:
+                result = await client.create_text2video(
+                    prompt=args.prompt,
+                    duration=duration,
+                    mode=args.mode if hasattr(args, 'mode') else "std",
+                    aspect_ratio=args.aspect_ratio,
+                    sound=sound,
+                    output=args.output
+                )
+
+            if result.get("success"):
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+                return 0
+            else:
+                print(f"错误: {result.get('error')}")
+                return 1
+        finally:
+            await client.close()
+    else:
+        # Vidu (Yunwu) 后端
+        if not Config.YUNWU_API_KEY:
+            print(json.dumps({
+                "success": False,
+                "error": "YUNWU_API_KEY 未配置",
+                "hint": "请设置环境变量: export YUNWU_API_KEY='your-api-key'",
+                "get_key": "访问 https://yunwu.ai 注册获取 API key"
+            }, indent=2, ensure_ascii=False))
+            return 1
+
+        client = ViduClient()
+        try:
+            if args.image:
+                result = await client.create_img2video(
+                    image_path=args.image,
+                    prompt=args.prompt,
+                    duration=args.duration,
+                    resolution=args.resolution,
+                    audio=args.audio,
+                    output=args.output
+                )
+            else:
+                result = await client.create_text2video(
+                    prompt=args.prompt,
+                    duration=args.duration,
+                    aspect_ratio=args.aspect_ratio,
+                    audio=args.audio,
+                    output=args.output
+                )
+
+            if result.get("success"):
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+                return 0
+            else:
+                print(f"错误: {result.get('error')}")
+                return 1
+        finally:
+            await client.close()
 
 
 async def cmd_music(args):
@@ -1197,6 +1558,16 @@ async def cmd_check(args):
             "purpose": "Vidu 视频生成 + Gemini 图片生成",
             "get_key": "https://yunwu.ai"
         },
+        "KLING_ACCESS_KEY": {
+            "value": Config.KLING_ACCESS_KEY,
+            "purpose": "Kling 视频生成 Access Key",
+            "get_key": "https://klingai.kuaishou.com"
+        },
+        "KLING_SECRET_KEY": {
+            "value": Config.KLING_SECRET_KEY,
+            "purpose": "Kling 视频生成 Secret Key",
+            "get_key": "https://klingai.kuaishou.com"
+        },
         "SUNO_API_KEY": {
             "value": Config.SUNO_API_KEY,
             "purpose": "Suno 音乐生成",
@@ -1247,6 +1618,10 @@ def main():
     video_parser.add_argument("--aspect-ratio", "-a", default="9:16", help="宽高比")
     video_parser.add_argument("--audio", action="store_true", help="生成原生音频")
     video_parser.add_argument("--output", "-o", help="输出文件路径")
+    video_parser.add_argument("--backend", "-b", choices=["vidu", "kling"], default="vidu",
+                              help="视频生成后端 (vidu 或 kling)")
+    video_parser.add_argument("--mode", "-m", choices=["std", "pro"], default="std",
+                              help="生成模式 (Kling 专用: std 或 pro)")
 
     # music 子命令
     music_parser = subparsers.add_parser("music", help="生成音乐")

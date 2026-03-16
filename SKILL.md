@@ -567,6 +567,49 @@ if not state.get("storyboard_confirmed", False):
 
 ---
 
+### Kling 多镜头模式（可选）
+
+**kling-v3-omni 支持多镜头一镜到底**，可以在一次 API 调用中生成包含多个镜头的视频。
+
+#### 两种分镜模式
+
+**1. intelligence 模式** - AI 自动分镜：
+- 适合简单叙事，AI 自动处理分镜
+- 只需提供完整的故事描述
+
+**2. customize 模式** - 自定义分镜（推荐用于精确控制）：
+- 精确控制每个镜头的内容和时长
+- 适合剧情视频、广告等
+
+#### 多镜头分镜设计格式
+
+```
+镜头 1，时长 3s：室内中景，烛光摇曳。老臣跪在殿下，声音颤抖："陛下，此举万万不可！"
+镜头 2，时长 3s：宝座特写，皇帝的手指有力地敲击着龙椅扶手。他沉声反问："朕若不反击，颜面何在？"
+镜头 3，时长 2s：侧面拍摄老臣，他重重扣头。
+镜头 4，时长 3s：皇帝起身，走到老臣面前："起来吧。"
+镜头 5，时长 2s：特写，老臣惊愕抬头
+镜头 6，时长 2s：远景，皇帝独自走向大殿深处
+```
+
+#### 多镜头规则
+
+- 镜头数量与视频时长匹配（如 15s 视频可设计 6 个镜头）
+- 总时长 3-15s
+- 每个镜头至少 1s
+- 所有镜头时长之和 = 视频总时长
+
+#### 分镜策略选择
+
+| 场景 | 推荐模式 | 原因 |
+|------|---------|------|
+| 剧情视频（故事、广告） | multi_shot + customize | 精确控制每个镜头 |
+| 简单叙事 | multi_shot + intelligence | AI自动处理，省心 |
+| 素材混剪（vlog、展示） | 单镜头逐个生成 | 素材独立，灵活拼接 |
+| 简单短视频（<10s） | 单镜头 text2video | 快速生成 |
+
+---
+
 ## Phase 4: 执行生成
 
 ### API Key 管理
@@ -657,8 +700,12 @@ export YUNWU_API_KEY="user_provided_key"
 # 环境检查
 python ~/.claude/skills/vico-edit/vico_tools.py check
 
-# 视频生成
+# 视频生成（Vidu 后端，默认）
 python ~/.claude/skills/vico-edit/vico_tools.py video --image <图片> --prompt <描述> --duration <秒> --output <输出>
+
+# 视频生成（Kling 后端）
+python ~/.claude/skills/vico-edit/vico_tools.py video --prompt <描述> --backend kling --duration 5 --output <输出>
+python ~/.claude/skills/vico-edit/vico_tools.py video --image <图片> --prompt <描述> --backend kling --output <输出>
 
 # 音乐生成
 python ~/.claude/skills/vico-edit/vico_tools.py music --prompt <描述> --style <风格> --output <输出>
@@ -672,6 +719,29 @@ python ~/.claude/skills/vico-edit/vico_tools.py image --prompt <描述> --style 
 # 图片分析（内置多模态能力）
 python ~/.claude/skills/vico-edit/vico_tools.py vision <图片路径> [--prompt "分析提示词"]
 python ~/.claude/skills/vico-edit/vico_tools.py vision <目录路径> --batch [--prompt "分析提示词"]
+```
+
+### 视频生成后端选择
+
+| 后端 | 模型 | 时长 | 特点 | 推荐场景 |
+|------|------|------|------|---------|
+| **Vidu** (默认) | viduq3-pro | 5-10s | 稳定、快速 | 简单视频、快速原型 |
+| **Kling** | kling-v3-omni | 3-15s | 音画同出、多镜头、主体控制 | 剧情视频、高质量内容 |
+
+**Kling 独有功能**：
+- 音画同出：生成视频时自动生成音频（台词、环境音）
+- 多镜头：一次生成包含多个镜头的视频
+- 主体控制：保持角色/物品一致性
+- Pro 模式：更高质量，生成时间更长
+
+**支持的 Kling 模型**：
+- `kling-v3`：最新旗舰模型（推荐）
+- `kling-v1-5`：v1.5 版本
+- `kling-v1`：v1 版本
+
+```bash
+# Kling 高质量模式
+python vico_tools.py video --prompt "电影感场景" --backend kling --mode pro --duration 10
 ```
 
 ### vico_editor.py - 剪辑工具
@@ -694,6 +764,8 @@ python ~/.claude/skills/vico-edit/vico_editor.py color --video <视频> --preset
 | 变量 | 用途 | 何时需要 |
 |------|------|---------|
 | YUNWU_API_KEY | Vidu 视频生成 + Gemini 图片生成 | 生成视频/图片时 |
+| KLING_ACCESS_KEY | Kling 视频生成 Access Key | 使用 Kling 后端时 |
+| KLING_SECRET_KEY | Kling 视频生成 Secret Key | 使用 Kling 后端时 |
 | SUNO_API_KEY | Suno 音乐生成 | 生成 BGM 时 |
 | VOLCENGINE_TTS_APP_ID | 火山引擎 TTS | 生成旁白时 |
 | VOLCENGINE_TTS_ACCESS_TOKEN | 火山引擎 TTS | 生成旁白时 |
