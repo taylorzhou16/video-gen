@@ -93,6 +93,13 @@ python vico_tools.py video --prompt "<描述>" --backend kling --duration 5 --ou
 python vico_tools.py video --image <图片> --prompt "<描述>" --backend kling --output video.mp4
 python vico_tools.py video --prompt "<描述>" --backend kling --mode pro --duration 10  # 高质量模式
 
+# Kling 多镜头模式
+python vico_tools.py video --prompt "<故事描述>" --backend kling --multi-shot --shot-type intelligence --duration 10
+python vico_tools.py video --prompt "<总体描述>" --backend kling --multi-shot --shot-type customize --multi-prompt '[{"index":1,"prompt":"镜头1","duration":"3"}]' --duration 5
+
+# Kling 首尾帧控制
+python vico_tools.py video --image <首帧图> --tail-image <尾帧图> --prompt "<动作描述>" --backend kling --duration 5
+
 # 音乐生成
 python vico_tools.py music --prompt "<描述>" --style "Lo-fi" --output music.mp3
 
@@ -180,6 +187,48 @@ export VOLCENGINE_TTS_ACCESS_TOKEN="your-token"
 - httpx（HTTP 客户端）
 
 ## 更新日志
+
+### v1.3.1 (2026-03-17)
+📋 **Storyboard 结构优化 & 流程完善**
+
+#### Storyboard 结构升级
+- ✨ **场景-分镜两层结构**
+  - 从单层 `shots` 数组改为 `scenes` -> `shots` 两层结构
+  - 新增场景字段：`scene_id`、`scene_name`、`narrative_goal`、`spatial_setting`、`time_state`、`visual_style`
+  - 场景时长自动计算（下属分镜时长之和）
+
+- ✨ **shot_id 命名规范化**
+  - 新格式：`scene{场景号}_shot{分镜号}`
+  - 单分镜示例：`scene1_shot1`、`scene1_shot2`
+  - 多镜头模式：`scene1_shot2to4_multi`（带 `_multi` 后缀）
+
+#### 字段优化
+- 🔄 `vidu_prompt` → `video_prompt`（通用名称）
+- ✨ 新增字段：
+  - `multi_shot`：是否为多镜头模式
+  - `generation_backend`：后端选择（kling/vidu）
+  - `frame_strategy`：首尾帧策略（none/first_frame_only/first_and_last_frame）
+  - `multi_shot_config`：Kling 多镜头配置
+  - `reference_personas`：引用的人物参考图
+
+#### 流程完善
+- 📝 **T2V/I2V 选择规则**：决策树 + 规则表
+- 📝 **首尾帧生成策略**：支持 `image_tail` 参数
+- 📝 **台词融入规则**：video_prompt 中直接包含台词信息
+- 📝 **Review 检查机制**：自动化检查项（结构完整性、分镜规则、Prompt 规范、技术选择）
+
+#### 人物参考图流程
+- 📝 完善人物参考图使用流程：
+  - 核心原则：参考图不能直接做首帧
+  - 完整流程：`人物参考图 → Gemini 生成分镜图 → img2video`
+  - 单人/双人镜头处理方案
+  - 分镜 JSON 标注 `reference_personas` 和 `notes`
+
+#### CLI 更新
+- 🔧 添加 `--multi-shot` 参数启用多镜头模式
+- 🔧 添加 `--shot-type` 参数选择分镜类型（intelligence/customize）
+- 🔧 添加 `--multi-prompt` 参数传入自定义分镜列表（JSON 格式）
+- 🔧 添加 `--tail-image` 参数支持首尾帧控制
 
 ### v1.3.0 (2026-03-16)
 🎬 **Kling 视频生成 API 集成**

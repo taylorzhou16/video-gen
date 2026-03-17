@@ -230,73 +230,347 @@ for result in results:
 
 根据素材和创意方案，自动生成分镜脚本。
 
+### Storyboard 结构概览
+
+Storyboard 采用 **场景-分镜两层结构**：
+
+```
+scenes[] → shots[]
+```
+
+- **场景 (Scene)**：语义+视觉+时空相对稳定的叙事单元，时长通常 10-30 秒
+- **分镜 (Shot)**：最小视频生成单元，时长 2-5 秒
+
+### 场景定义（Scene）
+
+每个场景包含：
+- `scene_id`：场景编号（如 "scene_1"）
+- `scene_name`：场景名称（如 "开场 - 咖啡馆相遇"）
+- `duration`：场景总时长 = 下属所有分镜时长之和
+- `narrative_goal`：主叙事目标
+- `spatial_setting`：空间设定
+- `time_state`：时间状态
+- `visual_style`：视觉母风格
+- `shots[]`：分镜列表
+
+### 分镜定义（Shot）
+
+每个分镜包含：
+- `shot_id`：分镜编号（格式：`scene{场景号}_shot{分镜号}`，如 `scene1_shot1`、`scene1_shot2to4_multi`）
+- `duration`：时长（2-5秒）
+- `shot_type`：镜头类型（establishing/dialogue/action/closeup/multi_shot 等）
+- `description`：简要描述
+- `generation_mode`：生成模式（text2video / img2video）
+- `multi_shot`：是否为多镜头模式（true/false）
+- `generation_backend`：后端选择（kling / vidu）
+- `video_prompt`：视频生成提示词（原 `vidu_prompt`）
+- `image_prompt`：图片生成提示词（img2video 时使用）
+- `frame_strategy`：首尾帧策略（none / first_frame_only / first_and_last_frame）
+- `dialogue`：台词信息（结构化记录）
+- `transition`：转场效果
+- `audio`：是否生成音频
+
 ### 分镜设计原则
 
 1. **时长分配**：总时长 = 目标时长（±2秒）
 2. **节奏变化**：避免所有镜头时长相同
 3. **景别变化**：连续镜头应有景别差异
 4. **转场选择**：根据情绪选择合适转场
+5. **单一动作原则**：同一分镜内最多只有 1 个动作
+6. **空间不变原则**：禁止在 shot 内发生空间环境变化
+7. **描述具体原则**：禁止抽象动作描述，用具体动作替代
+
+### 分镜时长限制
+
+- 普通镜头：2-3 秒
+- 复杂运动镜头：≤2 秒
+- 静态情绪镜头：≤5 秒
+
+---
+
+### shot_id 命名规则
+
+**推荐格式**：`scene{场景号}_shot{分镜号}`
+
+| 类型 | shot_id 示例 | 说明 |
+|------|-------------|------|
+| 单分镜 | `scene1_shot1`、`scene1_shot2`、`scene2_shot1` | 场景1的第1、2个分镜；场景2的第1个分镜 |
+| 多镜头模式 | `scene1_shot2to4_multi` | 一个视频片段包含分镜2、3、4，使用多镜头模式生成 |
+
+**多镜头模式示例**：
+
+```json
+{
+  "shot_id": "scene1_shot2to4_multi",
+  "duration": 10,
+  "multi_shot": true,
+  "multi_shot_config": {
+    "mode": "customize",
+    "shots": [
+      {"shot_id": "scene1_shot2", "duration": 3, "prompt": "第一个镜头描述"},
+      {"shot_id": "scene1_shot3", "duration": 4, "prompt": "第二个镜头描述"},
+      {"shot_id": "scene1_shot4", "duration": 3, "prompt": "第三个镜头描述"}
+    ]
+  }
+}
+```
+
+---
+
+### T2V/I2V 选择规则
+
+**决策树**：
+
+```
+镜头是否包含人物？
+├── 是 → 是否有注册的人物参考图？
+│        ├── 是 → img2video
+│        └── 否 → 是否需要精确控制表情/动作？
+│                 ├── 是 → img2video
+│                 └── 否 → text2video
+└── 否 → 是否是复杂场景/重要镜头？
+         ├── 是 → img2video
+         └── 否 → text2video
+```
+
+**规则表**：
+
+| 镜头类型 | 生成模式 | 首尾帧策略 |
+|---------|---------|-----------|
+| 场景建立镜头（无人物） | text2video | none |
+| 人物介绍镜头 | img2video | first_frame_only |
+| 人物对话镜头 | img2video | first_frame_only |
+| 人物动作镜头（简单） | img2video | first_frame_only |
+| 人物动作镜头（复杂） | img2video | first_and_last_frame |
+| 风景/物品特写 | text2video 或 img2video | none 或 first_frame_only |
+
+---
+
+### 首尾帧生成策略
+
+**`frame_strategy` 字段值**：
+
+| 值 | 说明 | 执行方式 |
+|---|------|---------|
+| `none` | 无需首尾帧 | 直接调用文生视频 API |
+| `first_frame_only` | 仅首帧 | 生成首帧图 → 调用 image2video API |
+| `first_and_last_frame` | 首尾帧 | 生成首帧和尾帧图 → 调用 Kling API（支持 `image_tail` 参数） |
+
+**首尾帧字段扩展**（用于 `first_and_last_frame` 策略）：
+
+```json
+{
+  "frame_strategy": "first_and_last_frame",
+  "image_prompt": "小美站在咖啡馆门口，准备推门进入（首帧）",
+  "last_frame_prompt": "小美坐在咖啡馆窗边，看向镜头微笑（尾帧）"
+}
+```
+
+---
+
+### 台词融入 video_prompt 规则
+
+⚠️ **重要原则**：当镜头包含台词时，**必须在 video_prompt 中完整描述**：
+
+- 说话的角色（含外貌特征描述）
+- 台词内容（用引号包裹）
+- 表情/情绪状态
+- 声音特质和语速
+
+**正确示例**：
+
+```json
+{
+  "shot_id": "scene1_shot5",
+  "video_prompt": "小美（25岁亚洲女性，黑色长直发）抬头看向服务生，温柔微笑着说：'这里真的很安静，我很喜欢。' 声音清脆悦耳，语速适中偏慢，带着一丝愉悦的情绪。保持竖屏9:16构图。",
+  "dialogue": {
+    "speaker": "小美",
+    "content": "这里真的很安静，我很喜欢。",
+    "emotion": "温柔、愉悦",
+    "voice_type": "清脆女声"
+  }
+}
+```
+
+**`dialogue` 字段用途**：
+- 后续 TTS 生成（如果需要后期配音）
+- 字幕提取
+- 用户快速查看所有台词
+
+**不需要后处理**：无需 `build_video_prompt()` 函数，因为生成阶段已经完成融合。
+
+---
+
+### Storyboard JSON 格式
+
+```json
+{
+  "project_name": "项目名称",
+  "target_duration": 60,
+  "aspect_ratio": "9:16",
+  "scenes": [
+    {
+      "scene_id": "scene_1",
+      "scene_name": "开场 - 咖啡馆相遇",
+      "duration": 18,
+      "narrative_goal": "展示女主角在咖啡馆的日常",
+      "spatial_setting": "温馨的城市咖啡馆",
+      "time_state": "下午3点",
+      "visual_style": "温暖色调，电影感",
+      "shots": [
+        {
+          "shot_id": "scene1_shot1",
+          "duration": 3,
+          "shot_type": "establishing",
+          "description": "咖啡馆全景",
+          "generation_mode": "text2video",
+          "multi_shot": false,
+          "generation_backend": "kling",
+          "video_prompt": "温馨的城市咖啡馆内部全景，午后阳光透过落地窗洒进来，温暖的金色光线，镜头缓慢推近，画面稳定。保持竖屏9:16构图。",
+          "image_prompt": null,
+          "frame_strategy": "none",
+          "dialogue": null,
+          "transition": "fade_in",
+          "audio": false
+        },
+        {
+          "shot_id": "scene1_shot2",
+          "duration": 5,
+          "shot_type": "dialogue",
+          "description": "小美对服务生说话",
+          "generation_mode": "img2video",
+          "multi_shot": false,
+          "generation_backend": "kling",
+          "video_prompt": "小美（25岁亚洲女性，黑色长直发）抬头看向服务生，温柔微笑着说：'这里真的很安静，我很喜欢。' 声音清脆悦耳，语速适中偏慢。保持竖屏9:16构图。",
+          "image_prompt": "小美（25岁亚洲女性，黑色长直发，瓜子脸）坐在咖啡馆窗边，抬头微笑，下午阳光，电影感，竖屏9:16构图",
+          "frame_strategy": "first_frame_only",
+          "dialogue": {
+            "speaker": "小美",
+            "content": "这里真的很安静，我很喜欢。",
+            "emotion": "温柔、愉悦",
+            "voice_type": "清脆女声"
+          },
+          "transition": "dissolve",
+          "audio": true
+        }
+      ]
+    }
+  ],
+  "personas": [],
+  "props": [],
+  "decision_log": {}
+}
+```
+
+### 字段对照表
+
+| 旧字段 | 新字段 | 说明 |
+|-------|--------|------|
+| `vidu_prompt` | `video_prompt` | 通用名称 |
+| `generation_mode` | 保留 | text2video / img2video |
+| - | `multi_shot` | true / false，是否为多镜头模式 |
+| - | `generation_backend` | kling / vidu |
+| - | `frame_strategy` | none / first_frame_only / first_and_last_frame |
+| - | `multi_shot_config` | Kling 多镜头配置（multi_shot=true 时使用） |
 
 ### 人物参考图策略（条件性）
 
 **仅当已注册人物参考图时考虑：**
 
-⚠️ **重要原则**：用户给的参考图是**样貌参考图**，只取人物面部/体态特征，**不能直接做 img2video 的首帧**！
+⚠️ **核心原则**：用户给的参考图是**样貌参考图**，只取人物面部/体态特征，**不能直接做 img2video 的首帧**！
 
-原因：参考图里的场景、服饰、姿态都是干扰，直接用会把乱七八糟的背景带进视频。
+**原因**：参考图里的场景、服饰、姿态都是干扰，直接用会把乱七八糟的背景带进视频。
 
-#### 正确流程：
+---
 
-**1. 单人镜头**：
+#### 完整流程图
+
 ```
-参考图 → Gemini 生成干净的人物图 → img2video
+人物参考图 → Gemini 生成分镜图（指定场景/服饰/姿态）→ img2video
 ```
-- 用 Gemini 基于参考图生成一张"干净"的人物图（指定场景、服饰、姿态）
-- 然后用这张干净图做 img2video
+
+#### 1. 单人镜头流程
+
+**Step 1**：用 Gemini 基于参考图生成分镜图（干净的人物图）
+- 指定场景、服饰、姿态
+- 去除参考图中的背景干扰
 
 ```bash
-# Step 1: 生成干净人物图
-python vico_tools.py image --prompt "A young woman standing in a cozy cafe, warm lighting, casual outfit, natural pose" --reference <参考图> --output clean_character.png
-
-# Step 2: 图生视频
-python vico_tools.py video --image clean_character.png --prompt "Camera slowly pushes in..." --output shot.mp4
+python vico_tools.py image \
+  --prompt "小美（25岁亚洲女性，黑色长直发，瓜子脸）坐在咖啡馆窗边，抬头微笑，下午阳光，电影感，竖屏9:16构图" \
+  --reference <参考图路径> \
+  --output generated/storyboard/scene1_shot2_frame.png
 ```
 
-**2. 双人/多人镜头**：
-```
-多个参考图 → Gemini 多参考图合成 → img2video
-```
-- 先用 Gemini 将多个人物合成到同一张图
-- **注意**：参考图顺序很重要，重要人物放后面（Gemini对最后输入的参考图给更多权重）
-
-**Prompt 示例（必须包含比例）**：
-```
-Reference for WOMAN (妈妈): MUST preserve exact appearance - long hair, round face
-Reference for MAN (爸爸): MUST preserve exact appearance - short hair, glasses
-A young Chinese couple walking together on a 1990s street, warm golden lighting, nostalgic film quality, 竖屏构图，9:16画面比例，人物位于画面中央，上下预留安全边距
-```
-
-**3. 无人镜头**（风景、物品、场景）：
-
-**必须在分镜中明确指定生成模式**：
-
-- `generation_mode: "text2video"` → 直接调用文生视频
-- `generation_mode: "img2video"` → 先生成场景图，再图生视频
-
-**不允许在执行阶段临时改变生成模式！**
+**Step 2**：用分镜图做 img2video
 
 ```bash
-# 方式A：直接文生视频
-python vico_tools.py video --prompt "A nostalgic 1990s Chinese street, golden afternoon light" --output shot.mp4
-
-# 方式B：先生图再转视频（推荐用于重要场景）
-python vico_tools.py image --prompt "A nostalgic 1990s Chinese street, golden afternoon light" --output scene.png
-python vico_tools.py video --image scene.png --prompt "Camera pans slowly across the street" --output shot.mp4
+python vico_tools.py video \
+  --image generated/storyboard/scene1_shot2_frame.png \
+  --prompt "小美抬头看向服务生，温柔微笑着说：'这里真的很安静，我很喜欢。'" \
+  --backend kling \
+  --audio \
+  --output generated/videos/scene1_shot2.mp4
 ```
 
-**如果没有注册人物参考图，跳过此步骤。**
+#### 2. 双人/多人镜头流程
 
-### 分镜 JSON 格式
+**Step 1**：用 Gemini 多参考图合成一张分镜图
+- 多个人物合成到同一张图
+- **注意**：参考图顺序很重要，重要人物放后面（Gemini 对最后输入的参考图给更多权重）
+
+```bash
+python vico_tools.py image \
+  --prompt "小美（妈妈：长发、圆脸）和小明（爸爸：短发、戴眼镜）并肩走在1990年代的街道上，温暖的金色光线，怀旧电影质感，竖屏构图，9:16画面比例" \
+  --reference <妈妈参考图> <爸爸参考图> \
+  --output generated/storyboard/scene2_shot1_frame.png
+```
+
+**Step 2**：用合成图做 img2video
+
+```bash
+python vico_tools.py video \
+  --image generated/storyboard/scene2_shot1_frame.png \
+  --prompt "两人并肩缓缓行走，镜头跟随，画面稳定" \
+  --backend kling \
+  --output generated/videos/scene2_shot1.mp4
+```
+
+#### 3. Gemini Prompt 注意事项
+
+**必须包含**：
+- 人物身份标识 + 外貌特征（与参考图对应）
+- 场景描述（当前分镜的场景）
+- 服饰描述（当前分镜的服饰，可能与参考图不同）
+- 光影氛围
+- **画面比例**（竖屏9:16构图）
+
+**示例 Prompt**：
+```
+Reference for 小美: MUST preserve exact appearance - 25岁亚洲女性，黑色长直发，瓜子脸
+小美坐在温馨的咖啡馆窗边，穿着米色针织衫，下午阳光透过窗户洒进来，温暖柔和的氛围，
+电影感色调，浅景深虚化背景，竖屏构图，9:16画面比例，人物位于画面中央
+```
+
+#### 4. 分镜设计中的体现
+
+当镜头需要人物参考图时，在分镜中明确标注：
+
+```json
+{
+  "shot_id": "scene1_shot2",
+  "generation_mode": "img2video",
+  "frame_strategy": "first_frame_only",
+  "image_prompt": "小美（25岁亚洲女性，黑色长直发，瓜子脸）坐在咖啡馆窗边，抬头微笑，下午阳光，电影感，竖屏9:16构图",
+  "video_prompt": "小美抬头看向服务生，温柔微笑...",
+  "reference_personas": ["小美"],
+  "notes": "需要用 Gemini 基于小美参考图生成分镜图"
+}
+```
+
+**如果没有注册人物参考图，跳过此步骤，直接使用 text2video。**
+
+### 分镜 JSON 格式（旧版，保留兼容）
 
 ```json
 {
@@ -304,10 +578,10 @@ python vico_tools.py video --image scene.png --prompt "Camera pans slowly across
   "aspect_ratio": "9:16",
   "shots": [
     {
-      "shot_id": "s1",
+      "shot_id": "scene1_shot1",
       "generation_mode": "img2video",
       "source_material": "m1",
-      "vidu_prompt": "镜头缓慢推进，画面保持稳定，竖屏运镜，不破坏9:16构图",
+      "video_prompt": "镜头缓慢推进，画面保持稳定，竖屏运镜，不破坏9:16构图",
       "image_prompt": "A young woman...竖屏构图，9:16画面比例，人物位于画面中央",
       "audio": false,
       "duration": 5,
@@ -319,6 +593,8 @@ python vico_tools.py video --image scene.png --prompt "Camera pans slowly across
 }
 ```
 
+**注意**：推荐使用新的 scene-shot 两层结构，上述格式保留用于向后兼容。
+
 ### 比例约束规范（强制执行）
 
 **文生图 Prompt 必须包含比例信息**：
@@ -329,7 +605,7 @@ python vico_tools.py video --image scene.png --prompt "Camera pans slowly across
 
 **图生视频 Prompt 必须包含比例信息**：
 
-- 所有 vidu_prompt 必须确保运镜不破坏原始画面比例
+- 所有 video_prompt 必须确保运镜不破坏原始画面比例
 - 对于 9:16 竖屏，避免使用会导致画面变横的运镜描述
 
 ---
@@ -352,7 +628,7 @@ python vico_tools.py video --image scene.png --prompt "Camera pans slowly across
 电影感色调，浅景深虚化背景，竖屏构图，9:16画面比例，人物位于画面上三分之一下方
 ```
 
-**2. 视频生成 Prompt（Vidu）**
+**2. 视频生成 Prompt（Kling/Vidu）**
 
 - **必须使用中文编写**
 - 必须包含以下要素：
@@ -388,15 +664,16 @@ python vico_tools.py video --image scene.png --prompt "Camera pans slowly across
 
 ```json
 {
-  "shot_id": "s3",
+  "shot_id": "scene1_shot3",
   "generation_mode": "img2video",
-  "vidu_prompt": "年轻女子面对镜头说话，表情温柔，语速适中。她说着：'今天天气真好，我们一起去公园吧。' 声音清脆悦耳，带着愉悦的情绪。竖屏运镜，保持9:16构图",
+  "video_prompt": "年轻女子面对镜头说话，表情温柔，语速适中。她说着：'今天天气真好，我们一起去公园吧。' 声音清脆悦耳，带着愉悦的情绪。竖屏运镜，保持9:16构图",
   "audio": true,
-  "dialogue": "今天天气真好，我们一起去公园吧。",
-  "dialogue_speaker": "女主角-小美",
-  "dialogue_emotion": "愉悦、温柔",
-  "dialogue_pace": "适中",
-  "dialogue_voice": "清脆女声"
+  "dialogue": {
+    "speaker": "女主角-小美",
+    "content": "今天天气真好，我们一起去公园吧。",
+    "emotion": "愉悦、温柔",
+    "voice_type": "清脆女声"
+  }
 }
 ```
 
@@ -492,41 +769,45 @@ python vico_tools.py video --image scene.png --prompt "Camera pans slowly across
 #### 确认内容格式
 
 ```
-📹 分镜方案（总时长：30秒，画面比例：9:16）
+📹 分镜方案（总时长：60秒，画面比例：9:16）
 
 ═══════════════════════════════════════════════════════════════
 
-【镜头 1】时长：5秒 | 生成模式：图生视频 | 转场：淡入
-───────────────────────────────────────────────────────────────
-画面来源：photo_001.jpg
-图片生成 Prompt：
-  一位25岁的亚洲女性（小美），黑色长发披肩，穿着米色针织衫，
-  坐在窗边木质椅子上，下午阳光斜射，温暖氛围，竖屏9:16构图
-视频生成 Prompt：
-  镜头缓慢推近，画面保持稳定，从远景推到中景。保持竖屏9:16构图。
-台词/音频：无
-
+【场景 1】开场 - 咖啡馆相遇 | 时长：18秒
+叙事目标：展示女主角在咖啡馆的日常
+空间设定：温馨的城市咖啡馆 | 时间：下午3点
 ───────────────────────────────────────────────────────────────
 
-【镜头 2】时长：4秒 | 生成模式：图生视频 | 转场：叠化
-───────────────────────────────────────────────────────────────
-画面来源：photo_002.jpg
-图片生成 Prompt：
-  小美的特写（与镜头1为同一人），25岁亚洲女性，黑色长发，瓜子脸，
-  面带微笑看向窗外，侧逆光，轮廓光，电影感色调，竖屏9:16构图
-视频生成 Prompt：
-  镜头轻微环绕，保持对焦在人物面部，画面稳定。保持竖屏9:16构图。
-台词/音频：无
+  【分镜 1-1】时长：3秒 | 类型：establishing | 生成模式：文生视频
+  后端：kling | 转场：fade_in
+  ─────────────────────────────────────────────────────────────
+  描述：咖啡馆全景
+  video_prompt：
+    温馨的城市咖啡馆内部全景，午后阳光透过落地窗洒进来，
+    温暖的金色光线，镜头缓慢推近，画面稳定。
+    保持竖屏9:16构图。
+  台词/音频：无
 
-───────────────────────────────────────────────────────────────
+  ─────────────────────────────────────────────────────────────
 
-【镜头 3】时长：6秒 | 生成模式：文生视频 | 转场：擦除
-───────────────────────────────────────────────────────────────
-画面来源：AI生成
-视频生成 Prompt：
-  海边日落全景，金色阳光洒在海面上，镜头缓慢横移，画面稳定。
-  保持竖屏9:16构图，不破坏画面比例。
-台词/音频：有（环境音）
+  【分镜 1-2】时长：5秒 | 类型：dialogue | 生成模式：图生视频
+  后端：kling | 首尾帧：first_frame_only | 转场：dissolve
+  ─────────────────────────────────────────────────────────────
+  描述：小美对服务生说话
+  image_prompt：
+    小美（25岁亚洲女性，黑色长直发，瓜子脸）坐在咖啡馆窗边，
+    抬头微笑，下午阳光，电影感，竖屏9:16构图
+  video_prompt：
+    小美（25岁亚洲女性，黑色长直发）抬头看向服务生，
+    温柔微笑着说：'这里真的很安静，我很喜欢。'
+    声音清脆悦耳，语速适中偏慢。保持竖屏9:16构图。
+  台词：小美："这里真的很安静，我很喜欢。"
+  音频：有
+
+═══════════════════════════════════════════════════════════════
+
+【场景 2】相遇 - 意外邂逅 | 时长：22秒
+...
 
 ═══════════════════════════════════════════════════════════════
 
@@ -535,6 +816,7 @@ python vico_tools.py video --image scene.png --prompt "Camera pans slowly across
 - 生成模式是否符合预期？
 - 人物描述在各镜头间是否一致？
 - 台词和音频设置是否正确？
+- 首尾帧策略是否正确？
 
 确认这个方案后，我将开始执行视频生成（可能消耗 API 额度）。
 
@@ -567,17 +849,96 @@ if not state.get("storyboard_confirmed", False):
 
 ---
 
+### Review 检查机制
+
+生成完 storyboard 后，Director 需进行系统性检查：
+
+#### 自动化检查项
+
+**1. 结构完整性**
+- 总时长是否匹配目标时长（±2秒）
+- 场景时长是否等于其下属分镜时长之和
+
+**2. 分镜规则**
+- 每个分镜时长是否符合限制（2-5秒）
+- 是否有分镜包含多个动作
+- 是否有分镜内发生空间变化
+
+**3. Prompt 规范**
+- 所有 video_prompt 是否包含比例信息
+- 台词是否已融入 video_prompt
+- 是否避免了抽象动作描述
+
+**4. 技术选择**
+- T2V/I2V 选择是否合理
+- 后端选择是否匹配需求
+- 首尾帧策略是否正确
+
+#### 检查示例
+
+```python
+def review_storyboard(storyboard):
+    issues = []
+
+    # 检查总时长
+    total_duration = sum(scene["duration"] for scene in storyboard["scenes"])
+    if abs(total_duration - storyboard["target_duration"]) > 2:
+        issues.append(f"总时长不匹配: {total_duration}s vs 目标 {storyboard['target_duration']}s")
+
+    # 检查每个分镜
+    for scene in storyboard["scenes"]:
+        scene_duration = 0
+        for shot in scene["shots"]:
+            # 时长限制
+            if shot["duration"] > 5:
+                issues.append(f"{shot['shot_id']}: 时长过长 ({shot['duration']}s)")
+
+            # 检查比例信息
+            if "9:16" not in shot.get("video_prompt", ""):
+                issues.append(f"{shot['shot_id']}: video_prompt 缺少比例信息")
+
+            scene_duration += shot["duration"]
+
+        # 场景时长校验
+        if scene_duration != scene["duration"]:
+            issues.append(f"{scene['scene_id']}: 场景时长不匹配")
+
+    return issues
+```
+
+---
+
 ### Kling 多镜头模式（可选）
 
 **kling-v3-omni 支持多镜头一镜到底**，可以在一次 API 调用中生成包含多个镜头的视频。
 
+#### 多镜头配置字段
+
+```json
+{
+  "shot_id": "scene1_shot2to4_multi",
+  "duration": 10,
+  "multi_shot": true,
+  "multi_shot_config": {
+    "mode": "customize",
+    "shots": [
+      {"shot_id": "scene1_shot2", "duration": 3, "prompt": "第一个镜头描述"},
+      {"shot_id": "scene1_shot3", "duration": 4, "prompt": "第二个镜头描述"},
+      {"shot_id": "scene1_shot4", "duration": 3, "prompt": "第三个镜头描述"}
+    ]
+  }
+}
+```
+
 #### 两种分镜模式
 
 **1. intelligence 模式** - AI 自动分镜：
+- `multi_shot_config.mode = "intelligence"`
 - 适合简单叙事，AI 自动处理分镜
 - 只需提供完整的故事描述
 
 **2. customize 模式** - 自定义分镜（推荐用于精确控制）：
+- `multi_shot_config.mode = "customize"`
 - 精确控制每个镜头的内容和时长
 - 适合剧情视频、广告等
 
@@ -649,7 +1010,7 @@ export YUNWU_API_KEY="user_provided_key"
 
 每个镜头生成前，检查 prompt 是否包含比例信息：
 - 文生图：检查 Gemini prompt 是否包含比例描述
-- 图生视频：检查 vidu_prompt 是否规避了比例冲突的运镜
+- 图生视频：检查 video_prompt 是否规避了比例冲突的运镜
 - 文生视频：检查 text2video 的 prompt 是否包含比例描述，且 aspect_ratio 参数正确
 
 ### 生成模式
@@ -707,6 +1068,13 @@ python ~/.claude/skills/vico-edit/vico_tools.py video --image <图片> --prompt 
 python ~/.claude/skills/vico-edit/vico_tools.py video --prompt <描述> --backend kling --duration 5 --output <输出>
 python ~/.claude/skills/vico-edit/vico_tools.py video --image <图片> --prompt <描述> --backend kling --output <输出>
 
+# Kling 多镜头模式
+python ~/.claude/skills/vico-edit/vico_tools.py video --prompt "故事描述" --backend kling --multi-shot --shot-type intelligence --duration 10
+python ~/.claude/skills/vico-edit/vico_tools.py video --prompt "总体描述" --backend kling --multi-shot --shot-type customize --multi-prompt '[{"index":1,"prompt":"镜头1描述","duration":"3"},{"index":2,"prompt":"镜头2描述","duration":"4"}]' --duration 7
+
+# Kling 首尾帧控制
+python ~/.claude/skills/vico-edit/vico_tools.py video --image <首帧图> --tail-image <尾帧图> --prompt "动作描述" --backend kling --duration 5
+
 # 音乐生成
 python ~/.claude/skills/vico-edit/vico_tools.py music --prompt <描述> --style <风格> --output <输出>
 
@@ -720,6 +1088,15 @@ python ~/.claude/skills/vico-edit/vico_tools.py image --prompt <描述> --style 
 python ~/.claude/skills/vico-edit/vico_tools.py vision <图片路径> [--prompt "分析提示词"]
 python ~/.claude/skills/vico-edit/vico_tools.py vision <目录路径> --batch [--prompt "分析提示词"]
 ```
+
+#### Kling 命令行参数说明
+
+| 参数 | 说明 |
+|------|------|
+| `--multi-shot` | 启用多镜头模式 |
+| `--shot-type` | 多镜头类型：`intelligence`（AI自动）或 `customize`（自定义） |
+| `--multi-prompt` | 自定义分镜的镜头列表（JSON格式） |
+| `--tail-image` | 尾帧图片路径（用于首尾帧控制） |
 
 ### 视频生成后端选择
 
@@ -866,7 +1243,7 @@ python ~/.claude/skills/vico-edit/vico_editor.py color --video <视频> --preset
 
 1. **优先使用同期声**：视频生成模型的音频能力可以生成带台词的视频
 2. **TTS 仅用于旁白**：不要把 TTS 用于角色对话
-3. **Prompt 中明确描述**：如果镜头有台词，vidu_prompt 必须包含完整的声音设计
+3. **Prompt 中明确描述**：如果镜头有台词，video_prompt 必须包含完整的声音设计
 
 ### 无人镜头生成方式（必须在分镜中明确）
 

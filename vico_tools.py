@@ -477,6 +477,7 @@ class KlingClient:
         duration: int = 5,
         mode: str = "std",
         sound: str = "on",
+        tail_image_path: str = None,
         output: str = None
     ) -> Dict[str, Any]:
         """
@@ -488,6 +489,7 @@ class KlingClient:
             duration: 时长（3-15秒）
             mode: std 或 pro
             sound: on 或 off
+            tail_image_path: 尾帧图片路径（用于首尾帧控制）
             output: 输出文件路径
         """
         # 准备图片
@@ -531,7 +533,27 @@ class KlingClient:
             "sound": sound
         }
 
-        logger.info(f"📤 创建 Kling 图生视频任务: {prompt[:50]}...")
+        # 处理尾帧图片（首尾帧控制）
+        if tail_image_path:
+            if tail_image_path.startswith(('http://', 'https://')):
+                tail_image_url = tail_image_path
+            else:
+                if not os.path.exists(tail_image_path):
+                    return {"success": False, "error": f"尾帧图片不存在: {tail_image_path}"}
+
+                with open(tail_image_path, 'rb') as f:
+                    tail_image_data = f.read()
+
+                ext = os.path.splitext(tail_image_path)[1].lower()
+                mime_map = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                           '.webp': 'image/webp', '.heic': 'image/jpeg', '.heif': 'image/jpeg'}
+                mime_type = mime_map.get(ext, 'image/jpeg')
+                tail_image_url = f"data:{mime_type};base64,{base64.b64encode(tail_image_data).decode('utf-8')}"
+
+            payload["image_tail"] = tail_image_url
+            logger.info(f"📤 创建 Kling 图生视频任务（含尾帧）: {prompt[:50]}...")
+        else:
+            logger.info(f"📤 创建 Kling 图生视频任务: {prompt[:50]}...")
 
         try:
             token = self._get_token()
@@ -1353,6 +1375,20 @@ async def cmd_video(args):
             # Kling 时长范围：3-15s
             duration = max(3, min(15, args.duration))
 
+            # 处理多镜头参数
+            multi_shot = getattr(args, 'multi_shot', False)
+            shot_type = getattr(args, 'shot_type', None)
+            multi_prompt = None
+            if getattr(args, 'multi_prompt', None):
+                try:
+                    multi_prompt = json.loads(args.multi_prompt)
+                except json.JSONDecodeError:
+                    print(json.dumps({
+                        "success": False,
+                        "error": "multi_prompt JSON 解析失败"
+                    }, indent=2, ensure_ascii=False))
+                    return 1
+
             if args.image:
                 result = await client.create_image2video(
                     image_path=args.image,
@@ -1360,6 +1396,7 @@ async def cmd_video(args):
                     duration=duration,
                     mode=args.mode if hasattr(args, 'mode') else "std",
                     sound=sound,
+                    tail_image_path=getattr(args, 'tail_image', None),
                     output=args.output
                 )
             else:
@@ -1369,6 +1406,9 @@ async def cmd_video(args):
                     mode=args.mode if hasattr(args, 'mode') else "std",
                     aspect_ratio=args.aspect_ratio,
                     sound=sound,
+                    multi_shot=multi_shot,
+                    shot_type=shot_type,
+                    multi_prompt=multi_prompt,
                     output=args.output
                 )
 
@@ -1622,6 +1662,14 @@ def main():
                               help="视频生成后端 (vidu 或 kling)")
     video_parser.add_argument("--mode", "-m", choices=["std", "pro"], default="std",
                               help="生成模式 (Kling 专用: std 或 pro)")
+    video_parser.add_argument("--multi-shot", action="store_true",
+                              help="启用 Kling 多镜头模式")
+    video_parser.add_argument("--shot-type", choices=["intelligence", "customize"],
+                              help="多镜头分镜类型 (intelligence: AI自动, customize: 自定义)")
+    video_parser.add_argument("--multi-prompt", type=str,
+                              help="多镜头 prompt 列表 (JSON 格式)")
+    video_parser.add_argument("--tail-image", type=str,
+                              help="尾帧图片路径（用于首尾帧控制）")
 
     # music 子命令
     music_parser = subparsers.add_parser("music", help="生成音乐")
