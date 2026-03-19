@@ -207,7 +207,7 @@ export VOLCENGINE_TTS_ACCESS_TOKEN="your-token"
 #### 文档更新
 - ✨ **新增 V3-Omni 三层结构规范** — storyboard + frame_generation + video_generation
   - `storyboard-spec.md`：添加三层 schema 定义（storyboard/frame/video）
-  - `prompt-guide.md`：添加 Image Prompt 和 Video Prompt 编写规范（基于胡楚月范式）
+  - `prompt-guide.md`：添加 Image Prompt 和 Video Prompt 编写规范
   - `backend-guide.md`：新增 Path C（V3-Omni 推荐路径），更新决策树和路径对比
 
 - 📝 **Image Prompt 规范**
