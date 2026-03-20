@@ -201,6 +201,56 @@ export VOLCENGINE_TTS_ACCESS_TOKEN="your-token"
 
 ## 📋 更新日志
 
+### v1.3.7 (2026-03-20)
+🔧 **执行阶段修复 & 图片尺寸优化**
+
+#### 修复
+- 🐛 **Phase 4 aspect_ratio 传递** — 执行阶段必须从 storyboard.json 读取画面比例并传递给 CLI
+- 🐛 修复图片尺寸不一致导致的生成失败问题
+
+#### 新功能
+- ✨ **图片尺寸自动校验与调整** — 新增 `validate_and_resize_image()` 函数
+  - 最小边 < 720px 自动放大到 1280px
+  - 最大边 > 2048px 自动缩小到 2048px
+  - Kling/KlingOmni 调用前自动处理
+
+### v1.3.6 (2026-03-20)
+📝 **文档修复**
+
+#### 修复
+- 🐛 修复 `storyboard-spec.md` 中的冲突和歧义描述
+- 📝 澄清三层结构的字段定义和使用场景
+
+### v1.3.5 (2026-03-19)
+🎬 **角色一致性流程完善**
+
+#### 新功能
+- ✨ **Phase 1 角色注册增强**
+  - 新增 `personas.json` 结构，支持 `reference_image` 为 null
+  - 只处理用户已上传的参考图，未上传的留待 Phase 2 补充
+
+- ✨ **Phase 2 角色参考图收集**
+  - 新增问题 6：角色参考图来源选择
+  - 支持三种方式：AI 生成 / 用户上传 / 纯文字生成
+  - 自动调用 `vico_tools.py image` 生成标准角色参考图
+
+- ✨ **Phase 3 自动后端选择**
+  - 有参考图 + 多镜头人物 → `kling-omni` (角色一致性最佳)
+  - 有参考图 + 单镜头人物 → `kling` (首帧精确控制)
+  - 无参考图 + 人物 → `kling` text2video (已警告用户)
+  - 纯场景无人物 → `kling` text2video
+
+#### PersonaManager 增强
+- ✨ `list_personas_without_reference()` — 列出无参考图的角色
+- ✨ `update_reference_image()` — 更新角色参考图路径
+- ✨ `export_for_storyboard()` — 导出为 storyboard 兼容格式
+- ✨ `get_character_image_mapping()` — 生成 character_image_mapping
+
+#### SKILL.md 流程优化
+- 📝 新增「分镜生成前强制阅读」步骤
+- 📝 新增「Step 1: 同步角色信息到 Storyboard」
+- 📝 完善产出文件说明和 JSON 结构示例
+
 ### v1.3.4 (2026-03-19)
 🎬 **Kling V3-Omni 双阶段工作流规范化**
 
