@@ -3,12 +3,14 @@
 ## 目录
 
 - Storyboard 结构（Scene / Shot）
+- 人物注册与引用规范
 - 分镜设计原则与时长限制
 - shot_id 命名规则
-- T2V/I2V 选择规则
+- T2V/I2V/Omni 选择规则
 - 首尾帧生成策略
 - 台词融入 video_prompt
 - Storyboard JSON 格式
+- V3-Omni 两阶段结构
 - 多镜头模式（Kling / Kling Omni）
 - Review 检查机制
 - 展示给用户确认
@@ -21,6 +23,43 @@
 
 - **场景 (Scene)**：语义+视觉+时空相对稳定的叙事单元，时长通常 10-30 秒
 - **分镜 (Shot)**：最小视频生成单元，时长 2-5 秒
+
+## 人物注册与引用规范
+
+### 三层命名体系
+
+| 层级 | 用途 | 命名规范 | 示例 |
+|------|------|---------|------|
+| **Element ID** | 技术ID，用于JSON引用、Prompt中的角色标识 | `Element_` + 英文名/拼音 | `Element_Chuyue`, `Element_Xiaomei` |
+| **Display Name** | 显示名称，用于用户交互、中文描述 | 中文名 | `初月`, `小美` |
+| **Reference Tag** | Prompt中的占位符（自动映射） | `image_N` | `image_1`, `image_2` |
+
+### Workflow 中的使用流程
+
+**Phase 1: 人物识别**
+- 用户确认人物身份后，生成 `element_id`（自动：Element_ + 拼音/英文名）
+- 写入 `storyboard.json` 的 `elements.characters`
+- **注意**：Phase 1 只处理用户已上传的参考图，未上传的 `reference_images` 留空，由 Phase 2 补充
+
+**Phase 2: 角色参考图收集（关键）**
+- 检查 `reference_images` 为空的角色
+- 询问用户：AI生成 / 上传参考图 / 接受纯文字（警告）
+- 更新 `personas.json` 和 `storyboard.json` 的 `reference_images`
+
+**Phase 3: 分镜设计（LLM 自动生成）**
+- LLM 根据 `elements.characters` 生成分镜
+- 自动分配 `character_image_mapping`（按 characters 数组顺序：image_1, image_2...）
+- 根据 `reference_images` 是否存在，自动选择 `generation_mode`：
+  - 有参考图 + 多镜头 → `omni-video`
+  - 有参考图 + 单镜头 → `img2video`
+  - 无参考图 → `text2video`
+- 生成 Prompt 时：
+  - Image Prompt 用 `image_1`、`image_2` 引用外貌
+  - Video Prompt 用 `Element_XXX` + `image_N` 双重引用
+
+**Phase 4: 执行生成**
+- 读取 `character_image_mapping`，按 `image_N` 顺序准备图片文件列表
+- 调用 API 时传入对应的 reference images
 
 ### 场景字段（Scene）
 
@@ -43,12 +82,12 @@
 - `multi_shot`：true / false
 - `generation_backend`：kling / kling-omni / vidu
 - `video_prompt`：视频生成提示词
-- `image_prompt`：图片生成提示词（img2video 时使用）
+- `image_prompt`：图片生成提示词（img2video/omni-video 时使用）
 - `frame_strategy`：none / first_frame_only / first_and_last_frame
-- `reference_images`：参考图路径列表（kling-omni 专用）
+- `reference_images`：参考图路径列表（omni-video 必需，img2video 可选）
 - `dialogue`：台词信息（结构化）
 - `transition`：转场效果
-- `audio`：是否生成音频
+- `audio`：音频配置（enabled, no_bgm, dialogue）
 
 ---
 
@@ -81,21 +120,30 @@
 
 ---
 
-## T2V/I2V 选择规则
+## T2V/I2V/Ref2V 选择规则
 
-**决策树**：
+**自动选择决策树**（Phase 3 执行）：
 
 ```
 镜头是否包含人物？
-├── 是 → 是否有注册的人物参考图？
-│        ├── 是 → img2video（或 omni-video）
-│        └── 否 → 是否需要精确控制表情/动作？
-│                 ├── 是 → img2video
-│                 └── 否 → text2video
-└── 否 → 是否是复杂场景/重要镜头？
-         ├── 是 → img2video
-         └── 否 → text2video
+├── 是 → 人物是否有 reference_images？
+│        ├── 是 → 角色在多镜头中出现？
+│        │        ├── 是 → omni-video（Kling Omni）
+│        │        └── 否 → img2video（Kling）
+│        └── 否 → text2video（Kling，Phase 2 已警告）
+└── 否 → text2video（Kling）
 ```
+
+**选择规则表**：
+
+| 条件 | 生成模式 | 后端 | 说明 |
+|------|---------|------|------|
+| 有参考图 + 多镜头人物 | `omni-video` | `kling-omni` | 保证跨镜头角色一致性 |
+| 有参考图 + 单镜头人物 | `img2video` | `kling` | 首帧精确控制 |
+| 无参考图 + 人物 | `text2video` | `kling` | Phase 2 已警告 |
+| 纯场景无人物 | `text2video` | `kling` | 默认 |
+
+**旧的简化规则**（供参考）：
 
 | 镜头类型 | 生成模式 | 首尾帧策略 |
 |---------|---------|-----------|
@@ -140,9 +188,48 @@
     "emotion": "温柔、愉悦",
     "voice_type": "清脆女声"
   },
-  "audio": true
+  "audio": {
+    "enabled": true,
+    "dialogue": {
+      "speaker": "小美",
+      "text": "这里真的很安静，我很喜欢。",
+      "emotion": "温柔、愉悦"
+    },
+    "no_bgm": true
+  }
 }
 ```
+
+### audio 字段说明
+
+`audio` 字段采用对象格式，包含以下子字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `enabled` | boolean | 是否生成音频（包含环境音 + 台词），默认 true |
+| `dialogue` | object/null | 台词信息，null 表示无台词 |
+| `dialogue.speaker` | string | 说话角色 |
+| `dialogue.text` | string | 台词内容 |
+| `dialogue.emotion` | string | 情绪/语气 |
+| `no_bgm` | boolean | 是否在 prompt 中明确 "No background music" |
+
+### BGM 决策逻辑
+
+在 creative.json 中定义 `bgm` 字段：
+
+```json
+{
+  "bgm": {
+    "type": "ai_generated",
+    "style": "史诗感、赛车主题"
+  }
+}
+```
+
+`bgm.type` 取值：
+- `"ai_generated"` → 所有镜头 `audio.no_bgm = true`（BGM 由 Suno 后期合成）
+- `"user_provided"` → 所有镜头 `audio.no_bgm = true`（BGM 由用户提供）
+- `"none"` → 所有镜头 `audio.no_bgm = false`（视频模型自由决定）
 
 `dialogue` 字段用途：TTS 生成、字幕提取、用户快速查看。
 
@@ -157,6 +244,28 @@
   "project_name": "项目名称",
   "target_duration": 60,
   "aspect_ratio": "9:16",
+  "elements": {
+    "characters": [
+      {
+        "element_id": "Element_Chuyue",
+        "name": "初月",
+        "name_en": "Chuyue",
+        "reference_images": ["/path/to/ref.jpg"],
+        "visual_description": "25岁亚洲女性，黑色长直发及腰，瓜子脸..."
+      },
+      {
+        "element_id": "Element_Jiazhi",
+        "name": "嘉志",
+        "name_en": "Jiazhi",
+        "reference_images": ["/path/to/ref2.jpg"],
+        "visual_description": "成熟男性，短发，深邃眼神..."
+      }
+    ]
+  },
+  "character_image_mapping": {
+    "Element_Chuyue": "image_1",
+    "Element_Jiazhi": "image_2"
+  },
   "scenes": [
     {
       "scene_id": "scene_1",
@@ -174,21 +283,38 @@
           "description": "咖啡馆全景",
           "generation_mode": "text2video",
           "generation_backend": "kling",
-          "video_prompt": "温馨的城市咖啡馆内部全景，午后阳光透过落地窗洒进来，镜头缓慢推近。保持竖屏9:16构图。",
+          "video_prompt": "温馨的城市咖啡馆内部全景，午后阳光透过落地窗洒进来，镜头缓慢推近。保持竖屏9:16构图。No background music. Natural ambient sound only.",
           "frame_strategy": "none",
           "multi_shot": false,
           "dialogue": null,
           "transition": "fade_in",
-          "audio": false
+          "audio": {
+            "enabled": true,
+            "dialogue": null,
+            "no_bgm": true
+          }
         }
       ]
     }
   ],
-  "personas": [],
   "props": [],
   "decision_log": {}
 }
 ```
+
+### 字段说明
+
+**elements.characters**: 人物注册表，Phase 1 识别后写入
+- `element_id`: 技术ID，格式 `Element_` + 英文名/拼音
+- `name`: 中文显示名
+- `name_en`: 英文名
+- `reference_images`: 参考图路径列表
+- `visual_description`: 视觉特征描述
+
+**character_image_mapping**: 自动生成的映射表（Phase 3）
+- Key: `element_id` (如 `Element_Chuyue`)
+- Value: `image_N` tag (如 `image_1`)
+- 映射规则：按 characters 数组顺序分配 image_1, image_2...
 
 ### Kling Omni 模式示例
 
@@ -198,17 +324,23 @@
   "generation_mode": "omni-video",
   "generation_backend": "kling-omni",
   "video_prompt": "小美（<<<image_1>>>）戴着耳机，在赛车模拟器前全神贯注。竖屏9:16构图。",
-  "reference_images": ["/path/to/xiaomei_ref.jpg"],
+  "reference_images": ["materials/personas/xiaomei_ref.jpg"],
+  "frame_strategy": "first_frame_only",
+  "image_prompt": "Cinematic realistic start frame...",
   "multi_shot": false,
-  "audio": true
+  "audio": {
+    "enabled": true,
+    "dialogue": null,
+    "no_bgm": true
+  }
 }
 ```
 
 ---
 
-## V3-Omni 三层结构（推荐）
+## V3-Omni 两阶段结构（推荐）
 
-针对 Kling V3-Omni 的**分镜图 + 视频**两阶段生成流程，推荐采用三层结构：
+针对 Kling V3-Omni 的**分镜图 + 视频**两阶段生成流程，推荐采用分层数据结构：
 
 ### 设计理念
 
@@ -223,6 +355,11 @@
   "shot_id": "scene1_shot1",
   "duration": 7,
   "workflow_version": "v3_omni_v1",
+  "character_image_mapping": {
+    "Element_Chuyue": "image_1",
+    "Element_Jiazhi": "image_2",
+    "Element_Tianyu": "image_3"
+  },
 
   "storyboard": {
     "chinese_description": "连续动作与对话 (约7s)全景。初月手忙脚乱退到门外...",
@@ -261,6 +398,11 @@
 ```
 
 ### 字段说明
+
+**character_image_mapping**: 角色到参考图占位符的映射
+- Key: Element ID (如 `Element_Chuyue`)
+- Value: Reference Tag (如 `image_1`)
+- 用于自动替换 Prompt 中的占位符
 
 **storyboard 层**（中文，给人看）
 - `chinese_description`: 剧情描述

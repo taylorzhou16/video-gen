@@ -27,6 +27,103 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ============== 图片尺寸验证与处理 ==============
+
+def validate_and_resize_image(
+    image_path: str,
+    output_path: str = None,
+    min_size: int = 720,
+    max_size: int = 2048,
+    target_size: int = 1280
+) -> Dict[str, Any]:
+    """
+    验证并调整图片尺寸
+
+    Args:
+        image_path: 图片路径
+        output_path: 输出路径（None 时自动生成）
+        min_size: 最小边长限制（小于此值会放大）
+        max_size: 最大边长限制（大于此值会缩小）
+        target_size: 目标尺寸（放大时使用）
+
+    Returns:
+        {
+            "success": True,
+            "original_size": (w, h),
+            "new_size": (w, h),
+            "resized": True/False,
+            "output_path": "..."
+        }
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        logger.warning("⚠️ PIL 未安装，跳过图片尺寸检查")
+        return {
+            "success": True,
+            "original_size": None,
+            "new_size": None,
+            "resized": False,
+            "output_path": image_path
+        }
+
+    try:
+        img = Image.open(image_path)
+        w, h = img.size
+
+        min_dim = min(w, h)
+        max_dim = max(w, h)
+
+        need_resize = False
+        scale = 1.0
+
+        if min_dim < min_size:
+            scale = target_size / min_dim
+            need_resize = True
+            logger.info(f"📐 图片尺寸过小 {w}x{h}，需要放大到至少 {min_size}px")
+        elif max_dim > max_size:
+            scale = max_size / max_dim
+            need_resize = True
+            logger.info(f"📐 图片尺寸过大 {w}x{h}，需要缩小到最多 {max_size}px")
+
+        if need_resize:
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+            img_resized = img.resize((new_w, new_h), Image.LANCZOS)
+
+            if output_path is None:
+                base, ext = os.path.splitext(image_path)
+                output_path = f"{base}_resized{ext}"
+
+            img_resized.save(output_path, quality=95)
+            logger.info(f"📐 图片尺寸调整: {w}x{h} → {new_w}x{new_h}")
+
+            return {
+                "success": True,
+                "original_size": (w, h),
+                "new_size": (new_w, new_h),
+                "resized": True,
+                "output_path": output_path
+            }
+
+        return {
+            "success": True,
+            "original_size": (w, h),
+            "new_size": (w, h),
+            "resized": False,
+            "output_path": image_path
+        }
+    except Exception as e:
+        logger.error(f"❌ 图片尺寸处理失败: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "original_size": None,
+            "new_size": None,
+            "resized": False,
+            "output_path": image_path
+        }
+
 # ============== 配置管理 ==============
 
 CONFIG_FILE = Path.home() / ".claude" / "skills" / "vico-edit" / "config.json"
@@ -501,16 +598,23 @@ class KlingClient:
             if not os.path.exists(image_path):
                 return {"success": False, "error": f"图片不存在: {image_path}"}
 
-            with open(image_path, 'rb') as f:
+            # 验证并调整图片尺寸
+            result = validate_and_resize_image(image_path)
+            if not result["success"]:
+                return {"success": False, "error": f"图片处理失败: {result.get('error')}"}
+
+            processed_path = result["output_path"]
+
+            with open(processed_path, 'rb') as f:
                 image_data = f.read()
 
-            ext = os.path.splitext(image_path)[1].lower()
+            ext = os.path.splitext(processed_path)[1].lower()
             if ext in ['.heic', '.heif']:
                 import subprocess
                 import tempfile
                 with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
                     tmp_path = tmp.name
-                subprocess.run(['ffmpeg', '-i', image_path, '-q:v', '2', tmp_path, '-y'],
+                subprocess.run(['ffmpeg', '-i', processed_path, '-q:v', '2', tmp_path, '-y'],
                               capture_output=True, check=True)
                 with open(tmp_path, 'rb') as f:
                     image_data = f.read()
@@ -544,7 +648,12 @@ class KlingClient:
                 if not os.path.exists(tail_image_path):
                     return {"success": False, "error": f"尾帧图片不存在: {tail_image_path}"}
 
-                with open(tail_image_path, 'rb') as f:
+                # 验证并调整尾帧图片尺寸
+                tail_result = validate_and_resize_image(tail_image_path)
+                if not tail_result["success"]:
+                    return {"success": False, "error": f"尾帧图片处理失败: {tail_result.get('error')}"}
+
+                with open(tail_result["output_path"], 'rb') as f:
                     tail_image_data = f.read()
 
                 tail_image_url = base64.b64encode(tail_image_data).decode('utf-8')
@@ -757,11 +866,24 @@ class KlingOmniClient:
 
         # 处理 image_list（纯 base64，不带 data URI 前缀）
         if image_list:
-            payload["image_list"] = [
-                {"image_url": self._file_to_base64(img_path)}
-                for img_path in image_list if os.path.exists(img_path)
-            ]
-            logger.info(f"📎 使用 {len(payload['image_list'])} 张参考图")
+            processed_images = []
+            for img_path in image_list:
+                if not os.path.exists(img_path):
+                    logger.warning(f"⚠️ 参考图不存在: {img_path}")
+                    continue
+
+                # 验证并调整图片尺寸
+                result = validate_and_resize_image(img_path)
+                if not result["success"]:
+                    logger.warning(f"⚠️ 图片处理失败: {img_path}, {result.get('error')}")
+                    continue
+
+                processed_images.append({
+                    "image_url": self._file_to_base64(result["output_path"])
+                })
+
+            payload["image_list"] = processed_images
+            logger.info(f"📎 使用 {len(processed_images)} 张参考图")
 
         # 处理多镜头参数
         if multi_shot:
@@ -1234,7 +1356,7 @@ class PersonaManager:
         self,
         name: str,
         gender: str,
-        reference_image: str,
+        reference_image: Optional[str] = None,
         features: str = ""
     ) -> str:
         """
@@ -1243,7 +1365,7 @@ class PersonaManager:
         Args:
             name: 人物名称
             gender: 性别 (male/female)
-            reference_image: 参考图路径
+            reference_image: 参考图路径（可为 None，Phase 2 补充）
             features: 外貌特征描述
 
         Returns:
@@ -1265,9 +1387,46 @@ class PersonaManager:
         }
 
         self._save()
-        logger.info(f"✅ 已注册人物: {name} (ID: {persona_id})")
+        if reference_image:
+            logger.info(f"✅ 已注册人物: {name} (ID: {persona_id}, 参考图: {reference_image})")
+        else:
+            logger.info(f"✅ 已注册人物: {name} (ID: {persona_id}, 无参考图)")
 
         return persona_id
+
+    def update_reference_image(self, persona_id: str, reference_image: str) -> bool:
+        """
+        更新人物参考图（Phase 2 使用）
+
+        Args:
+            persona_id: 人物ID
+            reference_image: 新的参考图路径
+
+        Returns:
+            是否成功
+        """
+        if persona_id not in self.personas:
+            logger.warning(f"⚠️ 人物不存在: {persona_id}")
+            return False
+
+        self.personas[persona_id]["reference_image"] = reference_image
+        self._save()
+        logger.info(f"✅ 已更新 {persona_id} 的参考图: {reference_image}")
+        return True
+
+    def has_reference_image(self, persona_id: str) -> bool:
+        """检查人物是否有参考图"""
+        persona = self.personas.get(persona_id)
+        if persona:
+            return bool(persona.get("reference_image"))
+        return False
+
+    def list_personas_without_reference(self) -> List[str]:
+        """返回所有没有参考图的人物ID列表"""
+        return [
+            pid for pid, data in self.personas.items()
+            if not data.get("reference_image")
+        ]
 
     def get_reference(self, persona_id: str) -> Optional[str]:
         """获取人物参考图路径"""
@@ -1336,6 +1495,46 @@ class PersonaManager:
             {"id": pid, **pdata}
             for pid, pdata in self.personas.items()
         ]
+
+    def export_for_storyboard(self) -> List[Dict[str, Any]]:
+        """
+        导出为 storyboard.json 兼容的 characters 格式
+
+        Returns:
+            符合 storyboard.json elements.characters 格式的列表
+        """
+        characters = []
+        for pid, pdata in self.personas.items():
+            name = pdata.get("name", "")
+            # 生成 name_en（拼音/英文）
+            name_en = pid.replace("_", " ").title().replace(" ", "")
+
+            ref_image = pdata.get("reference_image")
+            reference_images = [ref_image] if ref_image else []
+
+            characters.append({
+                "element_id": f"Element_{name_en}",
+                "name": name,
+                "name_en": name_en,
+                "reference_images": reference_images,
+                "visual_description": pdata.get("features", "")
+            })
+
+        return characters
+
+    def get_character_image_mapping(self) -> Dict[str, str]:
+        """
+        生成 character_image_mapping（用于 storyboard.json）
+
+        Returns:
+            {Element_Name: image_1, ...}
+        """
+        mapping = {}
+        for i, (pid, pdata) in enumerate(self.personas.items()):
+            name_en = pid.replace("_", " ").title().replace(" ", "")
+            element_id = f"Element_{name_en}"
+            mapping[element_id] = f"image_{i + 1}"
+        return mapping
 
     def has_personas(self) -> bool:
         """是否有人物注册"""
