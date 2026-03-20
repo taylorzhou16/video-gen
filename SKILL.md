@@ -365,7 +365,7 @@ storyboard["character_image_mapping"] = image_mapping
 - 自动生成调整后的图片（添加 `_resized` 后缀）
 
 **2. 参数校验**
-- 确认 `aspect_ratio` 参数已设置
+- **从 storyboard.json 读取 `aspect_ratio` 字段，传递给 CLI 的 `--aspect-ratio` 参数**
 - 根据 storyboard 的 `audio` 配置设置 API 参数（详见 prompt-guide.md）
 
 ### 执行规则
@@ -381,14 +381,18 @@ storyboard["character_image_mapping"] = image_mapping
 
 | generation_mode | CLI 参数 |
 |----------------|----------|
-| `omni-video` | `--backend kling-omni --image-list {ref1} {ref2} ...` |
-| `img2video` | `--image {frame_path}` |
-| `text2video` | 无 `--image` 或 `--image-list` |
+| `omni-video` | `--backend kling-omni --aspect-ratio {aspect_ratio} --image-list {ref1} {ref2} ...` |
+| `img2video` | `--aspect-ratio {aspect_ratio} --image {frame_path}` |
+| `text2video` | `--aspect-ratio {aspect_ratio}` |
+
+**重要**：`{aspect_ratio}` 从 `storyboard.json` 的 `aspect_ratio` 字段读取。
 
 **示例（Omni 模式）**：
 ```bash
+# 从 storyboard.json 读取 aspect_ratio（如 "16:9"）
 python vico_tools.py video \
   --backend kling-omni \
+  --aspect-ratio {aspect_ratio} \
   --prompt "孙悟空挥舞金箍棒..." \
   --image-list materials/personas/sunwukong_ref.png \
   --audio \
@@ -439,13 +443,13 @@ python ~/.claude/skills/vico-edit/vico_editor.py concat --inputs video1.mp4 vide
 # 环境检查
 python ~/.claude/skills/vico-edit/vico_tools.py check
 
-# 视频生成（自动选择后端）
-python ~/.claude/skills/vico-edit/vico_tools.py video --prompt <描述> --output <输出>
+# 视频生成（必须从 storyboard.json 读取 aspect_ratio）
+python ~/.claude/skills/vico-edit/vico_tools.py video --prompt <描述> --aspect-ratio {aspect_ratio} --output <输出>
 
 # 音乐 / TTS / 图片
 python ~/.claude/skills/vico-edit/vico_tools.py music --prompt <描述> --output <输出>
 python ~/.claude/skills/vico-edit/vico_tools.py tts --text <文本> --output <输出>
-python ~/.claude/skills/vico-edit/vico_tools.py image --prompt <描述> --output <输出>
+python ~/.claude/skills/vico-edit/vico_tools.py image --prompt <描述> --aspect-ratio {aspect_ratio} --output <输出>
 
 # 剪辑
 python ~/.claude/skills/vico-edit/vico_editor.py concat --inputs <视频列表> --output <输出>

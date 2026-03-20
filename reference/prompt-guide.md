@@ -275,7 +275,8 @@ Style: Cinematic realistic style. No music, no subtitles.
 
 - 所有 video_prompt 必须确保运镜不破坏原始画面比例
 - 9:16 竖屏：避免会导致画面变横的运镜描述
-- text2video 必须同时设置正确的 `aspect_ratio` 参数
+- **所有视频生成模式都必须通过 CLI `--aspect-ratio` 参数传递比例**
+- 参数值从 `storyboard.json` 的 `aspect_ratio` 字段读取
 
 ---
 
