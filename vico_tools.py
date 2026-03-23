@@ -1985,7 +1985,7 @@ async def cmd_video(args):
 
 async def cmd_music(args):
     """音乐生成命令"""
-    # 优先级：命令行 > creative.json > 报错/默认值
+    # 优先级：命令行 > creative.json > 报错
     prompt = args.prompt
     style = args.style
 
@@ -2011,10 +2011,14 @@ async def cmd_music(args):
         }, indent=2, ensure_ascii=False))
         return 1
 
-    # style 有默认值
+    # style 必须提供
     if style is None:
-        style = "Lo-fi, Chill"
-        logger.info(f"🎵 使用默认音乐风格: {style}")
+        print(json.dumps({
+            "success": False,
+            "error": "必须提供音乐风格",
+            "hint": "请通过 --style 或 --creative 参数提供音乐风格"
+        }, indent=2, ensure_ascii=False))
+        return 1
 
     if not Config.SUNO_API_KEY:
         print(json.dumps({
