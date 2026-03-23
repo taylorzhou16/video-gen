@@ -73,6 +73,16 @@ def get_resolution_for_aspect(aspect: str) -> Tuple[int, int]:
     return (1080, 1920)  # 默认 9:16
 
 
+def get_aspect_from_storyboard(storyboard_path: str) -> Optional[str]:
+    """从 storyboard.json 读取 aspect_ratio"""
+    try:
+        with open(storyboard_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return data.get("aspect_ratio")
+    except Exception:
+        return None
+
+
 async def get_video_info(video_path: str) -> Dict[str, Any]:
     """获取视频信息"""
     cmd = [
@@ -729,6 +739,16 @@ async def image_to_video(
 
 async def cmd_concat(args):
     """拼接命令"""
+    # 优先级：命令行 > storyboard.json > 默认值
+    aspect = args.aspect
+    if aspect is None and hasattr(args, 'storyboard') and args.storyboard:
+        aspect = get_aspect_from_storyboard(args.storyboard)
+        if aspect:
+            logger.info(f"📐 从 storyboard.json 读取宽高比: {aspect}")
+    if aspect is None:
+        aspect = "9:16"  # 最终默认值
+        logger.info(f"📐 使用默认宽高比: {aspect}")
+
     inputs = args.inputs
     output_dir = Path(args.output).parent
 
@@ -742,7 +762,7 @@ async def cmd_concat(args):
 
         # 创建临时目录存放归一化后的视频
         normalize_dir = output_dir / "normalized_temp"
-        inputs = await normalize_videos(inputs, str(normalize_dir), args.aspect)
+        inputs = await normalize_videos(inputs, str(normalize_dir), aspect)
 
         # 清理临时文件标记
         args._normalized_dir = normalize_dir
@@ -751,7 +771,7 @@ async def cmd_concat(args):
     result = await concat_videos(
         inputs=inputs,
         output=args.output,
-        aspect=args.aspect
+        aspect=aspect
     )
 
     # 清理临时归一化文件
@@ -840,11 +860,21 @@ async def cmd_trim(args):
 
 async def cmd_image(args):
     """图片生成视频命令"""
+    # 优先级：命令行 > storyboard.json > 默认值
+    aspect = args.aspect
+    if aspect is None and hasattr(args, 'storyboard') and args.storyboard:
+        aspect = get_aspect_from_storyboard(args.storyboard)
+        if aspect:
+            logger.info(f"📐 从 storyboard.json 读取宽高比: {aspect}")
+    if aspect is None:
+        aspect = "9:16"  # 最终默认值
+        logger.info(f"📐 使用默认宽高比: {aspect}")
+
     result = await image_to_video(
         image=args.image,
         output=args.output,
         duration=args.duration,
-        aspect=args.aspect,
+        aspect=aspect,
         zoom=args.zoom
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -862,7 +892,8 @@ def main():
     concat_parser = subparsers.add_parser("concat", help="拼接视频")
     concat_parser.add_argument("--inputs", "-i", nargs="+", required=True, help="输入视频列表")
     concat_parser.add_argument("--output", "-o", required=True, help="输出视频路径")
-    concat_parser.add_argument("--aspect", "-a", default="9:16", help="宽高比，默认 9:16")
+    concat_parser.add_argument("--aspect", "-a", default=None, help="宽高比（如 16:9, 9:16）")
+    concat_parser.add_argument("--storyboard", "-s", help="storyboard.json 路径，自动读取 aspect_ratio")
 
     # subtitle 子命令
     subtitle_parser = subparsers.add_parser("subtitle", help="添加字幕")
@@ -914,7 +945,8 @@ def main():
     image_parser.add_argument("--image", "-i", required=True, help="输入图片")
     image_parser.add_argument("--output", "-o", required=True, help="输出视频路径")
     image_parser.add_argument("--duration", "-d", type=float, default=5.0, help="时长(秒)")
-    image_parser.add_argument("--aspect", "-a", default="9:16", help="宽高比")
+    image_parser.add_argument("--aspect", "-a", default=None, help="宽高比")
+    image_parser.add_argument("--storyboard", "-s", help="storyboard.json 路径，自动读取 aspect_ratio")
     image_parser.add_argument("--zoom", action="store_true", help="添加 Ken Burns 缩放效果")
 
     args = parser.parse_args()

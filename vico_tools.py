@@ -215,6 +215,33 @@ class Config:
 Config = Config()
 
 
+# ============== Storyboard / Creative 读取工具 ==============
+
+def get_aspect_from_storyboard(storyboard_path: str) -> Optional[str]:
+    """从 storyboard.json 读取 aspect_ratio"""
+    try:
+        with open(storyboard_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return data.get("aspect_ratio")
+    except Exception:
+        return None
+
+
+def get_music_config_from_creative(creative_path: str) -> Optional[Dict[str, Any]]:
+    """从 creative.json 读取音乐配置"""
+    try:
+        with open(creative_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            music = data.get("music", {})
+            return {
+                "need_bgm": music.get("need_bgm", True),
+                "style": music.get("style"),
+                "prompt": music.get("prompt")  # 可选的详细描述
+            }
+    except Exception:
+        return None
+
+
 # ============== Vidu 视频生成 ==============
 
 class ViduClient:
@@ -485,7 +512,7 @@ class KlingClient:
         prompt: str,
         duration: int = 5,
         mode: str = "std",
-        aspect_ratio: str = "16:9",
+        aspect_ratio: str = "9:16",
         sound: str = "on",
         multi_shot: bool = False,
         shot_type: str = None,
@@ -831,7 +858,7 @@ class KlingOmniClient:
         prompt: str,
         duration: int = 5,
         mode: str = "std",
-        aspect_ratio: str = "16:9",
+        aspect_ratio: str = "9:16",
         sound: str = "on",
         image_list: List[str] = None,
         multi_shot: bool = False,
@@ -1023,7 +1050,9 @@ class SunoClient:
             "callbackUrl": "https://example.com/callback"
         }
 
-        logger.info(f"📤 创建音乐生成任务: {style}")
+        # 截断过长的 prompt（避免日志太长），不影响传给 API 的参数
+        display_prompt = prompt[:50] + "..." if len(prompt) > 50 else prompt
+        logger.info(f"📤 创建音乐生成任务 - 描述: {display_prompt}, 风格: {style}")
 
         try:
             response = await self.client.post(
@@ -1774,6 +1803,16 @@ async def cmd_video(args):
     """视频生成命令"""
     backend = getattr(args, 'backend', 'kling')
 
+    # 优先级：命令行 > storyboard.json > 默认值
+    aspect_ratio = args.aspect_ratio
+    if aspect_ratio is None and hasattr(args, 'storyboard') and args.storyboard:
+        aspect_ratio = get_aspect_from_storyboard(args.storyboard)
+        if aspect_ratio:
+            logger.info(f"📐 从 storyboard.json 读取宽高比: {aspect_ratio}")
+    if aspect_ratio is None:
+        aspect_ratio = "9:16"  # 最终默认值
+        logger.info(f"📐 使用默认宽高比: {aspect_ratio}")
+
     # BackendRouter: 按功能需求强制切换（image-list 只有 omni 支持，tail-image 只有 kling 支持）
     image_list = getattr(args, 'image_list', None)
     tail_image = getattr(args, 'tail_image', None)
@@ -1834,7 +1873,7 @@ async def cmd_video(args):
                     prompt=args.prompt,
                     duration=duration,
                     mode=args.mode if hasattr(args, 'mode') else "std",
-                    aspect_ratio=args.aspect_ratio,
+                    aspect_ratio=aspect_ratio,
                     sound=sound,
                     multi_shot=multi_shot,
                     shot_type=shot_type,
@@ -1885,7 +1924,7 @@ async def cmd_video(args):
                 prompt=args.prompt,
                 duration=duration,
                 mode=args.mode if hasattr(args, 'mode') else "std",
-                aspect_ratio=args.aspect_ratio,
+                aspect_ratio=aspect_ratio,
                 sound=sound,
                 image_list=image_list,
                 multi_shot=multi_shot,
@@ -1929,7 +1968,7 @@ async def cmd_video(args):
                 result = await client.create_text2video(
                     prompt=args.prompt,
                     duration=args.duration,
-                    aspect_ratio=args.aspect_ratio,
+                    aspect_ratio=aspect_ratio,
                     audio=args.audio,
                     output=args.output
                 )
@@ -1946,6 +1985,20 @@ async def cmd_video(args):
 
 async def cmd_music(args):
     """音乐生成命令"""
+    # 优先级：命令行 --style > creative.json > 报错提示
+    style = args.style
+
+    if style is None and hasattr(args, 'creative') and args.creative:
+        config = get_music_config_from_creative(args.creative)
+        if config:
+            style = config.get("style")
+            if style:
+                logger.info(f"🎵 从 creative.json 读取音乐风格: {style}")
+
+    if style is None:
+        style = "Lo-fi, Chill"  # 最终默认值
+        logger.info(f"🎵 使用默认音乐风格: {style}")
+
     if not Config.SUNO_API_KEY:
         print(json.dumps({
             "success": False,
@@ -1959,7 +2012,7 @@ async def cmd_music(args):
     try:
         result = await client.generate(
             prompt=args.prompt,
-            style=args.style,
+            style=style,
             instrumental=args.instrumental,
             output=args.output
         )
@@ -2004,6 +2057,16 @@ async def cmd_tts(args):
 
 async def cmd_image(args):
     """图片生成命令"""
+    # 优先级：命令行 > storyboard.json > 默认值
+    aspect_ratio = args.aspect_ratio
+    if aspect_ratio is None and hasattr(args, 'storyboard') and args.storyboard:
+        aspect_ratio = get_aspect_from_storyboard(args.storyboard)
+        if aspect_ratio:
+            logger.info(f"📐 从 storyboard.json 读取宽高比: {aspect_ratio}")
+    if aspect_ratio is None:
+        aspect_ratio = "9:16"  # 最终默认值
+        logger.info(f"📐 使用默认宽高比: {aspect_ratio}")
+
     if not Config.GEMINI_API_KEY:
         print(json.dumps({
             "success": False,
@@ -2018,7 +2081,7 @@ async def cmd_image(args):
         prompt=args.prompt,
         output=args.output,
         style=args.style,
-        aspect_ratio=args.aspect_ratio,
+        aspect_ratio=aspect_ratio,
         reference_images=args.reference
     )
 
@@ -2138,7 +2201,8 @@ def main():
     video_parser.add_argument("--prompt", "-p", required=True, help="视频描述")
     video_parser.add_argument("--duration", "-d", type=int, default=5, help="时长(秒)")
     video_parser.add_argument("--resolution", "-r", default="720p", help="分辨率")
-    video_parser.add_argument("--aspect-ratio", "-a", default="9:16", help="宽高比")
+    video_parser.add_argument("--aspect-ratio", "-a", default=None, help="宽高比（如 16:9, 9:16）")
+    video_parser.add_argument("--storyboard", "-s", help="storyboard.json 路径，自动读取 aspect_ratio")
     video_parser.add_argument("--audio", action="store_true", help="生成原生音频")
     video_parser.add_argument("--output", "-o", help="输出文件路径")
     video_parser.add_argument("--backend", "-b", choices=["vidu", "kling", "kling-omni"], default="kling",
@@ -2159,7 +2223,8 @@ def main():
     # music 子命令
     music_parser = subparsers.add_parser("music", help="生成音乐")
     music_parser.add_argument("--prompt", "-p", required=True, help="音乐描述")
-    music_parser.add_argument("--style", "-s", default="Lo-fi, Chill", help="音乐风格")
+    music_parser.add_argument("--style", "-s", default=None, help="音乐风格（可从 creative.json 自动读取）")
+    music_parser.add_argument("--creative", "-c", help="creative.json 路径，自动读取音乐风格")
     music_parser.add_argument("--no-instrumental", dest="instrumental", action="store_false", help="包含人声（默认纯音乐）")
     music_parser.set_defaults(instrumental=True)
     music_parser.add_argument("--output", "-o", help="输出文件路径")
@@ -2181,7 +2246,8 @@ def main():
     image_parser.add_argument("--output", "-o", help="输出文件路径")
     image_parser.add_argument("--style", "-s", default="cinematic",
                               help="风格（自由文本，如 cinematic, watercolor illustration 等）")
-    image_parser.add_argument("--aspect-ratio", "-a", default="9:16", help="宽高比")
+    image_parser.add_argument("--aspect-ratio", "-a", default=None, help="宽高比")
+    image_parser.add_argument("--storyboard", help="storyboard.json 路径，自动读取 aspect_ratio")
     image_parser.add_argument("--reference", "-r", nargs="+", help="参考图路径（支持多个，重要人物放后面）")
 
     # vision 子命令（内置多模态分析）
