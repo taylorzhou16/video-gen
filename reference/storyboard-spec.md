@@ -32,7 +32,7 @@
 |------|------|---------|------|
 | **Element ID** | 技术ID，用于JSON引用、Prompt中的角色标识 | `Element_` + 英文名/拼音 | `Element_Chuyue`, `Element_Xiaomei` |
 | **Display Name** | 显示名称，用于用户交互、中文描述 | 中文名 | `初月`, `小美` |
-| **Reference Tag** | Prompt中的占位符（自动映射） | `image_N` | `image_1`, `image_2` |
+| **Reference Tag** | Prompt中的占位符（自动映射） | `<<<image_N>>>` | `<<<image_1>>>`, `<<<image_2>>>` |
 
 ### Workflow 中的使用流程
 
@@ -49,13 +49,12 @@
 **Phase 3: 分镜设计（LLM 自动生成）**
 - LLM 根据 `elements.characters` 生成分镜
 - 自动分配 `character_image_mapping`（按 characters 数组顺序：image_1, image_2...）
-- 根据 `reference_images` 是否存在，自动选择 `generation_mode`：
-  - 有参考图 + 多镜头 → `omni-video`
-  - 有参考图 + 单镜头 → `img2video`
-  - 无参考图 → `text2video`
+- **根据项目类型选择生成模式**：
+  - 虚构片/短剧、MV短片 → **所有镜头强制分镜图** → `reference2video`（Omni）或 `img2video`（兜底）
+  - Vlog/写实类、广告片（有真实素材）→ 用户素材首帧 → `img2video`
 - 生成 Prompt 时：
-  - Image Prompt 用 `image_1`、`image_2` 引用外貌
-  - Video Prompt 用 `Element_XXX` + `image_N` 双重引用
+  - Image Prompt 用 `<<<image_1>>>`、`<<<image_2>>>` 引用外貌
+  - Video Prompt 用 `Element_XXX` + `<<<image_N>>>` 双重引用
 
 **Phase 4: 执行生成**
 - 读取 `character_image_mapping`，按 `image_N` 顺序准备图片文件列表
@@ -130,36 +129,57 @@
 
 ## T2V/I2V/Ref2V 选择规则
 
-**自动选择决策树**（Phase 3 执行）：
+**核心原则**：
+- **虚构片不使用 text2video**
+- **同一项目使用同一模型**
 
+### 项目类型判断
+
+| 用户意图关键词 | 项目类型 |
+|---------------|---------|
+| "短剧"、"剧情"、"故事" | 虚构片/短剧 |
+| "vlog"、"旅行记录"、"生活记录" | Vlog/写实类 |
+| "广告"、"宣传片"、"产品展示" | 广告片/宣传片 |
+| "MV"、"音乐视频" | MV短片 |
+
+### 自动选择决策树
+
+**虚构片/短剧、MV短片**：
 ```
-镜头是否包含人物？
-├── 是 → 人物是否有 reference_images？
-│        ├── 是 → 角色在多镜头中出现？
-│        │        ├── 是 → omni-video（Kling Omni）
-│        │        └── 否 → img2video（Kling）
-│        └── 否 → text2video（Kling，Phase 2 已警告）
-└── 否 → text2video（Kling）
+虚构内容 → 所有镜头强制先生成分镜图
+           ├── 优先 → Kling-3.0-Omni（reference2video）
+           │         └── image_list: [分镜图, 角色参考图]
+           │
+           └── 兜底 → Kling-3.0 或 Vidu Q3 Pro（img2video）
+                      └── --image: 分镜图首帧
 ```
 
-**选择规则表**：
+**Vlog/写实类、广告片/宣传片（有真实素材）**：
+```
+真实素材 → 需要首帧控制
+           └── Kling-3.0 或 Vidu Q3 Pro（img2video）
+               └── --image: 用户素材首帧
+```
 
-| 条件 | 生成模式 | 后端 | 说明 |
-|------|---------|------|------|
-| 有参考图 + 多镜头人物 | `omni-video` | `kling-omni` | 保证跨镜头角色一致性（Omni多参考图） |
-| 有参考图 + 单镜头人物 | `img2video` | `kling` | 首帧精确控制（Gemini生首帧） |
-| 有参考图 + 单镜头人物（快速原型） | `omni-video` | `kling-omni` | 仅用参考图，不生成分镜图 |
-| 无参考图 + 人物 | `text2video` | `kling` | Phase 2 已警告 |
-| 纯场景无人物 | `text2video` | `kling` | 默认 |
+### 选择规则表
 
-**旧的简化规则**（供参考）：
+| 项目类型 | 素材情况 | 生成模式 | 后端 | 说明 |
+|---------|---------|---------|------|------|
+| 虚构片/短剧 | 有/无角色参考图 | `reference2video` | `kling-omni` | 强制分镜图，Omni 保证一致性 |
+| MV短片 | 有/无角色参考图 | `reference2video` | `kling-omni` | 强制分镜图，音乐驱动 |
+| Vlog/写实类 | 用户真实素材 | `img2video` | `kling` 或 `vidu` | 用户素材首帧控制 |
+| 广告片/宣传片 | 有真实素材 | `img2video` | `kling` 或 `vidu` | 产品/企业素材首帧 |
+| 广告片/宣传片 | 无真实素材 | `reference2video` | `kling-omni` | 纯虚构展示 |
 
-| 镜头类型 | 生成模式 | 首尾帧策略 |
-|---------|---------|-----------|
-| 场景建立镜头（无人物） | text2video | none |
-| 人物介绍/对话/动作（简单） | img2video | first_frame_only |
-| 人物动作（复杂） | img2video | first_and_last_frame |
-| 风景/物品特写 | text2video 或 img2video | none 或 first_frame_only |
+### 模型与生成路径支持
+
+| 模型 | reference2video | img2video | text2video |
+|------|----------------|-----------|------------|
+| **Kling-3.0-Omni** | ✅ 支持 | ❌ 不支持 | ✅ 支持 |
+| **Kling-3.0** | ❌ 不支持 | ✅ 支持 | ✅ 支持 |
+| **Vidu Q3 Pro** | ❌ 不支持 | ✅ 支持 | ✅ 支持 |
+
+**关键**：Kling-3.0-Omni 不支持 img2video（首帧控制），需要首帧控制时不能用 Omni。
 
 ---
 

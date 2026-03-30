@@ -126,9 +126,17 @@ python vico_tools.py image --prompt "<描述>" --style cinematic --output image.
 
 | 后端 | 模型 | 时长 | 特点 |
 |------|------|------|------|
-| **Kling**（默认） | kling-v3 | 3-15s | 首帧精确控制、画面质感好 |
-| **Kling Omni** | kling-v3-omni | 3-15s | 多参考图、角色一致性最佳、音画同出 |
-| **Vidu**（兜底） | viduq3-pro | 5-10s | 稳定、快速 |
+| **Kling Omni** | kling-3.0-omni | 3-15s | 多参考图(reference2video)、角色一致性最佳、音画同出 |
+| **Kling** | kling-3.0 | 3-15s | 首帧精确控制(img2video)、画面质感好 |
+| **Vidu**（兜底） | vidu-q3-pro | 5-10s | 稳定、快速、首帧控制 |
+
+**关键区别**：
+- **Kling Omni** 支持 `reference2video`（多参考图），但**不支持 `img2video`（首帧控制）**
+- **Kling / Vidu** 支持 `img2video`（首帧控制），但不支持多参考图
+
+**选择建议**：
+- 虚构片/短剧、MV → **Kling Omni**（角色一致性）
+- Vlog/写实类、广告片（有真实素材）→ **Kling 或 Vidu**（首帧控制）
 
 ### vico_editor.py
 
@@ -200,6 +208,27 @@ export VOLCENGINE_TTS_ACCESS_TOKEN="your-token"
 - httpx（HTTP 客户端）
 
 ## 📋 更新日志
+
+### v1.4.0 (2026-03-30)
+🎬 **视频生成最佳实践重构**
+
+#### 核心架构变更
+- ✨ **项目类型驱动决策** — 根据用户意图自动判断项目类型（虚构片/短剧、Vlog/写实类、广告片/宣传片、MV短片），无需用户手动选择
+- ✨ **虚构片禁用 text2video** — 所有虚构内容强制先生成分镜图，再走 reference2video 或 img2video
+- ✨ **同一项目统一模型** — 项目内不混用多种模型，选定一个后全项目统一
+
+#### 模型与生成路径
+- 📝 **更新模型名称** — Kling-3.0-Omni、Kling-3.0、Vidu Q3 Pro
+- 📝 **明确模型能力边界** — Kling-3.0-Omni 支持 reference2video 但**不支持 img2video（首帧控制）**
+- 📝 **决策矩阵优化** — 虚构片优先 Omni（角色一致性），Vlog/广告片用 Kling/Vidu（首帧控制）
+
+#### Bug 修复
+- 🐛 **Omni 引用格式修正** — `image_1` → `<<<image_1>>>`，符合官方文档要求
+
+#### 文档更新
+- 📝 `SKILL.md` — 后端选择概览、Phase 3 决策树重写
+- 📝 `storyboard-spec.md` — Reference Tag 格式、T2V/I2V/Ref2V 选择规则重写
+- 📝 `prompt-guide.md` — Omni 模式引用格式修正
 
 ### v1.3.10 (2026-03-23)
 🎵 **音乐生成参数规范化**

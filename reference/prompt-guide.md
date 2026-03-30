@@ -21,7 +21,7 @@
 |------|------|---------|------|
 | **Element ID** | 技术ID，JSON/Prompt中的角色标识 | `Element_` + 英文名/拼音 | `Element_Chuyue` |
 | **Display Name** | 显示名称，用户交互、中文描述 | 中文名 | `初月` |
-| **Reference Tag** | Prompt中的图片占位符 | `image_N` | `image_1`, `image_2` |
+| **Reference Tag** | Prompt中的图片占位符 | `<<<image_N>>>` | `<<<image_1>>>`, `<<<image_2>>>` |
 
 ### 单一数据源
 
@@ -49,7 +49,7 @@
 
 | 引用类型 | 写法 | 作用 |
 |---------|------|------|
-| 外貌引用 | `image_1` / `image_2` | 确保人物外貌稳定 |
+| 外貌引用 | `<<<image_1>>>` / `<<<image_2>>>` | 确保人物外貌稳定 |
 | 分镜图引用 | `Shot_XXX_frame` | 确保场景布局、人物位置 |
 | 角色标识 | `Element_Chuyue` | Motion sequence 中的角色标识 |
 
@@ -248,8 +248,8 @@ Style: Cinematic realistic style. No music, no subtitles.
 3. **服饰描述** — 款式、颜色、材质、配饰
 
 **Omni模式特殊要求**：
-- Image Prompt 用 `image_1`、`image_2` 引用外貌
-- Video Prompt 用 `Element_XXX` + `image_N` 双重引用
+- Image Prompt 用 `<<<image_1>>>`、`<<<image_2>>>` 引用外貌
+- Video Prompt 用 `Element_XXX` + `<<<image_N>>>` 双重引用
 
 ### 道具一致性
 

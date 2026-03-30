@@ -28,11 +28,16 @@ argument-hint: <素材目录或视频文件>
 
 ### 后端选择概览
 
-| 后端 | 核心优势 | 推荐场景 |
+| 模型 | 核心优势 | 推荐场景 |
 |------|---------|---------|
-| **Kling** (`kling`) | 首帧精确控制、画面质感好 | 大多数场景的首选 |
-| **Kling Omni** (`kling-omni`) | image_list 多参考图、角色一致性最佳 | 有人物的剧情视频 |
-| **Vidu** (`vidu`) | 稳定、快速 | 兜底、快速原型 |
+| **Kling-3.0-Omni** (`kling-omni`) | image_list 多参考图、角色一致性最佳 | 虚构片/短剧、MV短片（reference2video） |
+| **Kling-3.0** (`kling`) | 首帧精确控制、画面质感好 | Vlog/写实类、广告片（img2video） |
+| **Vidu Q3 Pro** (`vidu`) | 稳定、快速 | 兜底、快速处理真实素材 |
+
+**核心原则**：
+- **同一项目使用同一模型**，不混用
+- **虚构片优先 Kling-3.0-Omni**（reference2video）
+- **首帧控制用 Kling-3.0 或 Vidu**（img2video，Omni不支持首帧控制）
 
 详细后端对比和参考图策略：See [reference/backend-guide.md](reference/backend-guide.md)
 
@@ -225,7 +230,7 @@ manager.update_reference_image(persona_id, "materials/personas/{name}_ref.png")
 
 **C. 纯文字**：
 - 记录警告到 `creative/decision_log`
-- 后续 Phase 3 将使用 `text2video`（角色外貌可能不一致）
+- 后续 Phase 3 将**强制生成分镜图**，然后使用 img2video 或 reference2video
 
 **关键规则**：
 - **必须生成参考图**：角色需要在**多个镜头**中出现时
@@ -295,24 +300,50 @@ storyboard["character_image_mapping"] = image_mapping
 
 ### Step 2: 自动后端选择逻辑
 
-**根据角色参考图状态自动选择后端**（无需人工决策）：
+**根据项目类型自动选择后端**（无需人工决策）：
 
+#### 项目类型判断（Phase 1 自动识别）
+
+| 用户意图关键词 | 项目类型 |
+|---------------|---------|
+| "短剧"、"剧情"、"故事" | 虚构片/短剧 |
+| "vlog"、"旅行记录"、"生活记录" | Vlog/写实类 |
+| "广告"、"宣传片"、"产品展示" | 广告片/宣传片 |
+| "MV"、"音乐视频" | MV短片 |
+
+#### 决策树
+
+**虚构片/短剧、MV短片**：
 ```
-镜头是否包含人物？
-├── 是 → 人物是否有 reference_images？
-│        ├── 是 → 角色在多镜头中出现？
-│        │        ├── 是 → **omni-video**（Kling Omni）
-│        │        └── 否 → **img2video**（Kling）
-│        └── 否 → **text2video**（Kling，已警告用户）
-└── 否 → **text2video**（Kling）
+虚构内容 → 所有镜头强制先生成分镜图
+           ├── 优先 → Kling-3.0-Omni（reference2video）
+           │         └── image_list: [分镜图, 角色参考图]
+           │
+           └── 兜底 → Kling-3.0 或 Vidu Q3 Pro（img2video）
+                      └── --image: 分镜图首帧
 ```
 
-| 条件 | 生成模式 | 后端 | 说明 |
-|------|---------|------|------|
-| 有参考图 + 多镜头人物 | `omni-video` | `kling-omni` | 强制使用，保证跨镜头一致性 |
-| 有参考图 + 单镜头人物 | `img2video` | `kling` | 首帧精确控制 |
-| 无参考图 + 人物 | `text2video` | `kling` | Phase 2 已警告 |
-| 纯场景无人物 | `text2video` | `kling` | 默认 |
+**Vlog/写实类、广告片/宣传片（有真实素材）**：
+```
+真实素材 → 需要首帧控制
+           └── Kling-3.0 或 Vidu Q3 Pro（img2video）
+               └── --image: 用户素材首帧
+```
+
+#### 选择规则表
+
+| 项目类型 | 素材情况 | 生成模式 | 后端 |
+|---------|---------|---------|------|
+| 虚构片/短剧 | 有/无角色参考图 | **reference2video** | kling-omni |
+| MV短片 | 有/无角色参考图 | **reference2video** | kling-omni |
+| Vlog/写实类 | 用户真实素材 | **img2video** | kling 或 vidu |
+| 广告片/宣传片 | 有真实素材 | **img2video** | kling 或 vidu |
+| 广告片/宣传片 | 无真实素材 | **reference2video** | kling-omni |
+
+**核心原则**：
+1. **同一项目使用同一模型**，不混用
+2. **虚构片不使用 text2video**
+3. **Omni 不支持首帧控制**，需要首帧控制时用 Kling-3.0 或 Vidu
 
 ### Step 3: 生成分镜
 
