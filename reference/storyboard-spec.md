@@ -525,3 +525,94 @@ Kling 和 Kling Omni 均支持多镜头一镜到底。
 确认时展示每个镜头的：场景信息、生成模式、后端、video_prompt、image_prompt（如有）、台词、转场、时长。
 
 用户可选择：确认并执行 / 修改分镜 / 调整时长 / 更换转场 / 取消。
+
+---
+
+## fallback_plan 字段（降级预案）
+
+在 Phase 3 生成分镜时，推荐为每个镜头预留降级方案，避免临时编写 `image_prompt`。
+
+### 字段结构
+
+```json
+{
+  "shot_id": "scene1_shot1",
+  "generation_mode": "omni-video",
+  "generation_backend": "kling-omni",
+  "video_prompt": "...",
+  "reference_images": ["materials/personas/xiaomei_ref.jpg"],
+  "frame_strategy": "none",
+
+  "fallback_plan": {
+    "mode": "img2video",
+    "backend": "kling",
+    "image_prompt": "Cinematic realistic start frame.\nScene: ...\nLighting: ...\nCharacter: Referencing <<<image_1>>> appearance...\nStyle: ...",
+    "frame_strategy": "first_frame_only",
+    "frame_output": "generated/frames/{shot_id}_frame.png",
+    "reason": "Omni API 不可用时降级使用"
+  }
+}
+```
+
+### 字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `mode` | string | 降级后的生成模式：`img2video` 或 `text2video` |
+| `backend` | string | 降级后的后端：`kling` 或 `vidu` |
+| `image_prompt` | string | 生成分镜图的完整 prompt（降级时必须） |
+| `frame_strategy` | string | 降级后的首帧策略：`first_frame_only` |
+| `frame_output` | string | 分镜图输出路径模板 |
+| `reason` | string | 降级原因说明 |
+
+### 降级时的处理流程
+
+当需要降级时：
+
+1. 读取镜头的 `fallback_plan` 字段
+2. 将以下字段从 `fallback_plan` 复制到镜头主字段：
+   - `generation_mode` ← `fallback_plan.mode`
+   - `generation_backend` ← `fallback_plan.backend`
+   - `frame_strategy` ← `fallback_plan.frame_strategy`
+   - `image_prompt` ← `fallback_plan.image_prompt`
+3. 清空或调整 `reference_images`（img2video 不需要角色参考图）
+4. 执行降级后的生成流程
+
+### 示例：降级后的镜头
+
+```json
+// 降级前
+{
+  "shot_id": "scene1_shot1",
+  "generation_mode": "omni-video",
+  "generation_backend": "kling-omni",
+  "video_prompt": "小美（<<<image_1>>>）在咖啡馆窗边...",
+  "reference_images": ["materials/personas/xiaomei_ref.jpg"],
+  "frame_strategy": "none",
+  "fallback_plan": {
+    "mode": "img2video",
+    "backend": "kling",
+    "image_prompt": "Cinematic start frame. 25岁亚洲女性...",
+    "frame_strategy": "first_frame_only"
+  }
+}
+
+// 降级后（已复制 fallback_plan 字段）
+{
+  "shot_id": "scene1_shot1",
+  "generation_mode": "img2video",
+  "generation_backend": "kling",
+  "video_prompt": "小美在咖啡馆窗边...",  // 移除 <<<image_1>>> 引用
+  "reference_images": [],
+  "frame_strategy": "first_frame_only",
+  "image_prompt": "Cinematic start frame. 25岁亚洲女性...",
+  "frame_path": "generated/frames/scene1_shot1_frame.png",
+  "fallback_plan": { ... }  // 保留原始预案，可再次降级
+}
+```
+
+### 不需要 fallback_plan 的场景
+
+- 纯 `text2video` 镜头（无需参考图，降级无意义）
+- 用户明确表示不接受降级
+- 简单原型，不需要保证角色一致性
