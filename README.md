@@ -1,4 +1,4 @@
-# 🎬 Vico Edit - AI 视频剪辑 Skill
+# 🎬 Video-Gen - AI 视频剪辑 Skill
 
 一个 Claude Code Skill，将 AI 视频剪辑能力带入你的对话中。
 
