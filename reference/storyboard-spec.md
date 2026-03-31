@@ -229,6 +229,96 @@
 }
 ```
 
+---
+
+## 旁白分段规划（narration_segments）
+
+**触发条件**：Phase 2 确认需要「AI生成旁白」后，Phase 3 生成分镜时必须规划旁白分段。
+
+### 全局配置（根级别）
+
+```json
+{
+  "narration_config": {
+    "enabled": true,
+    "voice_style": "温柔女声，语速适中偏慢，情感饱满"
+  },
+  "narration_segments": [
+    {
+      "segment_id": "narr_1",
+      "time_range": "0-3s",
+      "target_shot": "scene1_shot1",
+      "text": "这是一个宁静的下午，阳光透过落地窗洒进咖啡馆..."
+    },
+    {
+      "segment_id": "narr_2",
+      "time_range": "8-11s",
+      "target_shot": "scene1_shot3",
+      "text": "她坐在窗边，望着窗外的风景，思绪飘向远方..."
+    }
+  ]
+}
+```
+
+### 字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `narration_config.enabled` | boolean | 是否启用旁白 |
+| `narration_config.voice_style` | string | 全局统一的旁白风格（一条视频内统一） |
+| `narration_segments` | array | 旁白分段列表 |
+| `segment_id` | string | 分段编号（格式：`narr_1`, `narr_2`...） |
+| `time_range` | string | 整体时间轴位置（格式：`0-3s`, `8-11s`，从视频起点算） |
+| `target_shot` | string | 对应的镜头 ID |
+| `text` | string | 该分段的旁白文案 |
+
+### 规划原则
+
+1. **时间轴连续性**：`time_range` 从视频起点（0秒）开始计算，不是镜头内时间
+2. **分段长度**：每段旁白控制在 2-5 秒可说完的长度（约 30-50 字）
+3. **避免冲突**：旁白时间范围不要与角色台词（同期声）重叠
+4. **镜头对应**：每个 segment 必须对应一个 target_shot
+5. **voice_style 统一**：一条视频内使用同一种旁白风格
+
+### 旁白文案分段技巧
+
+**不要这样**（一大坨）：
+```json
+{
+  "text": "这是一个宁静的下午，阳光透过落地窗洒进咖啡馆，她坐在窗边，望着窗外的风景，思绪飘向远方，回忆起那个特别的夏天。"
+}
+```
+
+**应该这样**（按镜头分段）：
+```json
+{
+  "narration_segments": [
+    {"segment_id": "narr_1", "time_range": "0-3s", "target_shot": "scene1_shot1", "text": "这是一个宁静的下午，阳光透过落地窗洒进咖啡馆..."},
+    {"segment_id": "narr_2", "time_range": "8-11s", "target_shot": "scene1_shot3", "text": "她坐在窗边，望着窗外的风景..."},
+    {"segment_id": "narr_3", "time_range": "15-18s", "target_shot": "scene2_shot1", "text": "思绪飘向远方，回忆起那个特别的夏天..."}
+  ]
+}
+```
+
+### 与 creative.json 的关联
+
+Phase 2 确认旁白需求后，`creative.json` 记录：
+```json
+{
+  "narration": {
+    "type": "ai_generated",
+    "voice_style": "温柔女声",
+    "full_text": "用户提供的完整旁白文案（如有多段）"
+  }
+}
+```
+
+Phase 3 生成分镜时：
+- 读取 `creative.narration.type`
+- 若为 `ai_generated`，则规划 `narration_segments`
+- 将 `creative.narration.full_text` 按镜头时间点分段
+- 将 `creative.narration.voice_style` 写入 `narration_config.voice_style`
+
 ### audio 字段说明
 
 `audio` 字段采用对象格式，包含以下子字段：

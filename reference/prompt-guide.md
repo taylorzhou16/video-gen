@@ -291,6 +291,55 @@ Style: Cinematic realistic style. No music, no subtitles.
 
 **核心原则**：能收同期声的镜头，不要用 TTS！
 
+### TTS 旁白生成流程
+
+**触发条件**：`storyboard.json` 存在 `narration_segments` 字段。
+
+**数据来源**：
+- `narration_config.voice_style` → 映射到 TTS 的 voice 和 emotion 参数
+- `narration_segments[].text` → TTS 的 --text 参数
+- `narration_segments[].segment_id` → 输出文件命名
+
+**CLI 调用示例**：
+
+```bash
+# 每段旁白单独生成
+python video_gen_tools.py tts \
+  --text "这是一个宁静的下午，阳光透过落地窗洒进咖啡馆..." \
+  --voice female_narrator \
+  --emotion gentle \
+  --output generated/narration/narr_1.mp3
+```
+
+**voice 参数（火山引擎 TTS 音色）**：
+
+| 参数值 | 音色说明 | 火山引擎 ID |
+|-------|---------|------------|
+| `female_narrator` | 女声旁白，专业沉稳 | BV700_streaming |
+| `female_gentle` | 女声温柔，柔和亲切 | BV034_streaming |
+| `male_narrator` | 男声旁白，专业沉稳 | BV701_streaming |
+| `male_warm` | 男声温暖，磁性亲切 | BV033_streaming |
+
+**emotion 参数（可选）**：
+
+| 参数值 | 情感风格 |
+|-------|---------|
+| `neutral` | 中性（默认） |
+| `happy` | 开心 |
+| `sad` | 悲伤 |
+| `gentle` | 温柔 |
+| `serious` | 严肃 |
+
+**narration_config.voice_style 映射规则**：
+
+用户在 Phase 2 指定的 voice_style（如"温柔女声"）会在 Phase 3 映射到具体的 TTS 参数：
+- "温柔女声" → `voice: female_gentle, emotion: gentle`
+- "专业女声旁白" → `voice: female_narrator, emotion: neutral`
+- "磁性男声" → `voice: male_warm, emotion: neutral`
+- "严肃男声" → `voice: male_narrator, emotion: serious`
+
+**重要**：一条视频内使用同一套 voice + emotion 参数，保证旁白风格统一。
+
 ### BGM 约束
 
 **storyboard.json 中的 `audio` 字段与 API 参数的映射**：
