@@ -800,7 +800,7 @@ class YunwuKlingOmniClient:
             "prompt": prompt,
             "duration": str(duration),
             "mode": mode,
-            "audio": audio,
+            "sound": "on" if audio else "off",  # API规范要求 sound 参数，值为 "on"/"off"
             "aspect_ratio": aspect_ratio
         }
 
@@ -873,7 +873,7 @@ class YunwuKlingOmniClient:
         return result
 
     async def _file_to_base64(self, file_path: str) -> Optional[str]:
-        """文件转 base64"""
+        """文件转 base64（纯base64字符串，供yunwu API使用）"""
         if not os.path.exists(file_path):
             logger.warning(f"⚠️ 文件不存在: {file_path}")
             return None
@@ -887,12 +887,9 @@ class YunwuKlingOmniClient:
         with open(result["output_path"], 'rb') as f:
             image_data = f.read()
 
-        base64_data = base64.b64encode(image_data).decode('utf-8')
-        ext = os.path.splitext(result["output_path"])[1].lower()
-        mime_map = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp'}
-        mime_type = mime_map.get(ext, 'image/jpeg')
-
-        return f"data:{mime_type};base64,{base64_data}"
+        # 返回纯base64字符串（不要data URI前缀）
+        # yunwu API期望纯base64，而不是 data:image/xxx;base64,... 格式
+        return base64.b64encode(image_data).decode('utf-8')
 
     async def _wait_for_completion(self, task_id: str, max_wait: int = 600) -> Optional[str]:
         """等待任务完成"""
@@ -1584,17 +1581,17 @@ class FalKlingClient:
             "generate_audio": generate_audio
         }
 
-        # 首帧/单图
+        # 首帧/单图 (fal.ai 使用 start_image_url)
         if image_url:
-            payload["image_url"] = self._prepare_image_url(image_url)
+            payload["start_image_url"] = self._prepare_image_url(image_url)
 
-        # 多参考图
+        # 多参考图 (fal.ai 使用 image_urls，prompt 中用 @Image1 引用)
         if image_urls:
             payload["image_urls"] = [self._prepare_image_url(img) for img in image_urls]
 
-        # 尾帧
+        # 尾帧 (fal.ai 使用 end_image_url)
         if tail_image_url:
-            payload["tail_image_url"] = self._prepare_image_url(tail_image_url)
+            payload["end_image_url"] = self._prepare_image_url(tail_image_url)
 
         return await self._submit_and_wait(payload, output)
 
