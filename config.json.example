@@ -7,5 +7,8 @@
   "VISION_MODEL": "kimi-k2.5",
   "VISION_API_KEY": "your-vision-api-key",
   "KLING_ACCESS_KEY": "your-kling-access-key",
-  "KLING_SECRET_KEY": "your-kling-secret-key"
+  "KLING_SECRET_KEY": "your-kling-secret-key",
+  "FAL_API_KEY": "your-fal-api-key",
+  "COMPASS_API_KEY": "your-compass-api-key",
+  "SEEDANCE_API_KEY": "your-seedance-api-key"
 }

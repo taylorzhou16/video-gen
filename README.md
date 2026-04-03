@@ -163,7 +163,7 @@ python video_gen_editor.py speed --video video.mp4 --rate 1.5 --output out.mp4
 ## 🔑 环境变量
 
 ```bash
-# Yunwu API - 用于 Vidu 视频生成 + Gemini 图片生成
+# Yunwu API - 用于 Vidu 视频生成 + 图片生成（备用）
 export YUNWU_API_KEY="your-api-key"
 
 # Kling API - 用于 Kling 视频生成
@@ -176,12 +176,21 @@ export SUNO_API_KEY="your-api-key"
 # 火山引擎 TTS
 export VOLCENGINE_TTS_APP_ID="your-app-id"
 export VOLCENGINE_TTS_ACCESS_TOKEN="your-token"
+
+# fal.ai API - 用于图片生成（备用）
+export FAL_API_KEY="your-fal-api-key"
+
+# Compass API - 用于图片生成（Shopee 内部，最高优先级）
+export COMPASS_API_KEY="your-compass-api-key"
+
+# Seedance API - 用于 Seedance 视频生成（通过 piapi.ai 代理）
+export SEEDANCE_API_KEY="your-seedance-api-key"
 ```
 
 **注意**：
-- Gemini 图片生成走 Yunwu API
-- Kling/Kling-Omni 视频生成可通过 `--provider yunwu` 使用 Yunwu API（作为官方 API 的备用）
-- 使用同一个 YUNWU_API_KEY
+- **图片生成 Provider 优先级**：compass → fal → yunwu
+- **视频生成 Provider 优先级**：official → fal → yunwu
+- Compass 仅限 Shopee 内部使用，外部用户请用 fal 或 yunwu
 
 ## 🔄 工作流程
 

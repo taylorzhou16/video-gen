@@ -199,6 +199,13 @@ class Config:
 
     GEMINI_IMAGE_URL: str = "https://yunwu.ai/v1beta/models/gemini-3.1-flash-image-preview:generateContent"
 
+    # Compass API (Shopee internal)
+    @property
+    def COMPASS_API_KEY(self) -> str:
+        return self.get("COMPASS_API_KEY", "")
+
+    COMPASS_IMAGE_URL: str = "https://compass.llm.shopee.io/compass-api/v1/publishers/google/models/gemini-3.1-flash-image-preview:generateContent"
+
     # Kling API
     @property
     def KLING_ACCESS_KEY(self) -> str:
@@ -2364,6 +2371,108 @@ class FalImageClient:
             return {"success": False, "error": str(e)}
 
 
+class CompassImageClient:
+    """Gemini 图片生成客户端（通过 Shopee Compass API）"""
+
+    STYLE_PRESETS = {
+        "cinematic": "cinematic style, film grain, dramatic lighting, movie still",
+        "realistic": "photorealistic, natural lighting, high detail, 8k",
+        "anime": "anime style, vibrant colors, clean lines, studio ghibli inspired",
+        "artistic": "artistic style, painterly, expressive brushstrokes, impressionist",
+    }
+
+    async def generate(
+        self,
+        prompt: str,
+        output: str = None,
+        style: str = "cinematic",
+        aspect_ratio: str = "9:16",
+        reference_images: List[str] = None
+    ) -> Dict[str, Any]:
+        """生成图片，支持多参考图"""
+        import httpx
+
+        style_suffix = self.STYLE_PRESETS.get(style, style)
+        full_prompt = f"{prompt}, {style_suffix}"
+
+        # 构建 parts 数组
+        parts = []
+
+        # 添加参考图（图生图模式）
+        if reference_images:
+            for ref_path in reference_images:
+                if os.path.exists(ref_path):
+                    with open(ref_path, 'rb') as f:
+                        img_data = f.read()
+                    ext = os.path.splitext(ref_path)[1].lower()
+                    mime_map = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp'}
+                    mime_type = mime_map.get(ext, 'image/jpeg')
+                    parts.append({
+                        "inlineData": {
+                            "mimeType": mime_type,
+                            "data": base64.b64encode(img_data).decode('utf-8')
+                        }
+                    })
+
+        # 添加文本 prompt
+        parts.append({"text": full_prompt})
+
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": parts
+                }
+            ],
+            "generationConfig": {
+                "responseModalities": ["IMAGE", "TEXT"]
+            }
+        }
+
+        ref_info = f" (with {len(reference_images)} reference images)" if reference_images else ""
+        logger.info(f"📤 图片生成（compass{ref_info}）: {prompt[:30]}...")
+
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
+                    Config.COMPASS_IMAGE_URL,
+                    json=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {Config.COMPASS_API_KEY}",
+                    }
+                )
+                response.raise_for_status()
+                result = response.json()
+
+            candidates = result.get("candidates", [])
+            if not candidates:
+                return {"success": False, "error": "No candidates in response"}
+
+            parts = candidates[0].get("content", {}).get("parts", [])
+            image_data = None
+            for part in parts:
+                if "inlineData" in part:
+                    image_data = part["inlineData"].get("data")
+                    break
+
+            if not image_data:
+                return {"success": False, "error": "No image data in response"}
+
+            if output:
+                Path(output).parent.mkdir(parents=True, exist_ok=True)
+                with open(output, "wb") as f:
+                    f.write(base64.b64decode(image_data))
+                logger.info(f"✅ 图片已保存: {output}")
+                return {"success": True, "output": output}
+
+            return {"success": True, "image_base64": image_data}
+
+        except Exception as e:
+            logger.error(f"❌ 图片生成失败: {e}")
+            return {"success": False, "error": str(e)}
+
+
 # ============== 人物角色管理（可选工具）==============
 
 class PersonaManager:
@@ -3284,13 +3393,15 @@ async def cmd_image(args):
     # Provider 自动选择逻辑
     provider = getattr(args, 'provider', None)
     if provider is None:
-        # 优先级：fal → yunwu（yunwu 放最后）
-        if Config.FAL_API_KEY:
+        # 优先级：compass → fal → yunwu（yunwu 放最后）
+        if Config.COMPASS_API_KEY:
+            provider = 'compass'
+        elif Config.FAL_API_KEY:
             provider = 'fal'
         elif Config.GEMINI_API_KEY:  # GEMINI_API_KEY 实际上是 YUNWU_API_KEY
             provider = 'yunwu'
         else:
-            provider = 'fal'  # 默认，会报错提示配置
+            provider = 'compass'  # 默认，会报错提示配置
 
     logger.info(f"🔧 使用 provider: {provider}")
 
@@ -3304,8 +3415,27 @@ async def cmd_image(args):
         aspect_ratio = "9:16"  # 最终默认值
         logger.info(f"📐 使用默认宽高比: {aspect_ratio}")
 
+    # compass provider (Shopee internal)
+    if provider == 'compass':
+        if not Config.COMPASS_API_KEY:
+            print(json.dumps({
+                "success": False,
+                "error": "COMPASS_API_KEY 未配置",
+                "hint": "请在 config.json 中添加 COMPASS_API_KEY"
+            }, indent=2, ensure_ascii=False))
+            return 1
+
+        client = CompassImageClient()
+        result = await client.generate(
+            prompt=args.prompt,
+            output=args.output,
+            style=args.style,
+            aspect_ratio=aspect_ratio,
+            reference_images=args.reference
+        )
+
     # fal provider
-    if provider == 'fal':
+    elif provider == 'fal':
         if not Config.FAL_API_KEY:
             print(json.dumps({
                 "success": False,
@@ -3515,8 +3645,8 @@ def main():
     image_parser.add_argument("--aspect-ratio", "-a", default=None, help="宽高比")
     image_parser.add_argument("--storyboard", help="storyboard.json 路径，自动读取 aspect_ratio")
     image_parser.add_argument("--reference", "-r", nargs="+", help="参考图路径（支持多个，重要人物放后面）")
-    image_parser.add_argument("--provider", choices=["fal", "yunwu"], default=None,
-                              help="API provider (默认自动选择: fal 优先)")
+    image_parser.add_argument("--provider", choices=["compass", "fal", "yunwu"], default=None,
+                              help="API provider (默认自动选择: compass 优先)")
 
     # vision 子命令（内置多模态分析）
     vision_parser = subparsers.add_parser("vision", help="分析图片内容")

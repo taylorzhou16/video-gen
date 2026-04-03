@@ -86,14 +86,21 @@ python ~/.claude/skills/video-gen/video_gen_editor.py color --video <视频> --p
 
 | 变量 | 用途 | 何时需要 |
 |------|------|---------|
-| YUNWU_API_KEY | Vidu/Kling/Kling-Omni 视频生成 + Gemini 图片生成 | 生成视频/图片时（可作为 Kling 官方 API 的备用） |
-| KLING_ACCESS_KEY | Kling 视频生成 Access Key | 使用 Kling/Kling Omni 时 |
-| KLING_SECRET_KEY | Kling 视频生成 Secret Key | 使用 Kling/Kling Omni 时 |
+| COMPASS_API_KEY | Gemini 图片生成（Shopee 内部） | 图片生成时（最高优先级） |
+| FAL_API_KEY | Gemini 图片生成 + Kling-Omni 视频（fal.ai 代理） | 图片/视频生成时（备用） |
+| YUNWU_API_KEY | Vidu/Kling/Kling-Omni 视频生成 + 图片生成（yunwu 代理） | 生成视频/图片时（最低优先级备用） |
+| KLING_ACCESS_KEY | Kling 视频生成 Access Key | 使用 Kling/Kling Omni 官方 API 时 |
+| KLING_SECRET_KEY | Kling 视频生成 Secret Key | 使用 Kling/Kling Omni 官方 API 时 |
+| SEEDANCE_API_KEY | Seedance 视频生成（piapi.ai 代理） | 使用 Seedance 后端时 |
 | SUNO_API_KEY | Suno 音乐生成 | 生成 BGM 时 |
 | VOLCENGINE_TTS_APP_ID | 火山引擎 TTS | 生成旁白时 |
 | VOLCENGINE_TTS_ACCESS_TOKEN | 火山引擎 TTS | 生成旁白时 |
 | VISION_API_KEY | 内置视觉分析 fallback | Read 工具无法识别图片时 |
 | VISION_BASE_URL | 视觉模型 API 地址 | 自定义视觉模型时 |
 | VISION_MODEL | 视觉模型名称 | 自定义视觉模型时 |
+
+**Provider 优先级**：
+- 图片生成：compass → fal → yunwu
+- 视频生成：official → fal → yunwu
 
 API key 可通过环境变量或 `config.json` 配置。
