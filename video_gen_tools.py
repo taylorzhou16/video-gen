@@ -284,6 +284,8 @@ MODE_BACKEND_MAP = {
     "omni-video": "kling-omni",
     "img2video": "kling",
     "text2video": "kling",
+    "veo3-text2video": "veo3",
+    "veo3-img2video": "veo3",
 }
 
 BACKEND_PROVIDER_KEYS = {
@@ -291,6 +293,7 @@ BACKEND_PROVIDER_KEYS = {
     "kling": ["KLING_ACCESS_KEY", "YUNWU_API_KEY", "FAL_API_KEY"],
     "kling-omni": ["KLING_ACCESS_KEY", "YUNWU_API_KEY", "FAL_API_KEY"],
     "vidu": ["YUNWU_API_KEY"],
+    "veo3": ["COMPASS_API_KEY"],
 }
 
 
@@ -356,6 +359,9 @@ def validate_storyboard(storyboard_path: str) -> Dict[str, Any]:
             elif backend in ("kling", "kling-omni"):
                 if duration < 3 or duration > 15:
                     errors.append(f"[{shot_id}] Kling 时长必须 3-15s，当前 {duration}s")
+            elif backend == "veo3":
+                if duration not in [4, 6, 8]:
+                    errors.append(f"[{shot_id}] Veo3 时长必须为 4/6/8s，当前 {duration}s")
 
             # Seedance shots 收集（后续按 scene 汇总）
             if backend == "seedance":
@@ -3525,6 +3531,8 @@ async def cmd_video(args):
             provider = 'yunwu'  # vidu 只有 yunwu provider
         elif backend == 'seedance':
             provider = 'piapi'  # seedance 只有 piapi provider
+        elif backend == 'veo3':
+            provider = 'compass'  # veo3 只有 compass provider
         elif Config.KLING_ACCESS_KEY and Config.KLING_SECRET_KEY:
             provider = 'official'  # 优先使用官方 API
         elif Config.FAL_API_KEY:
@@ -4209,6 +4217,14 @@ async def cmd_setup(args):
                 {"key": "YUNWU_API_KEY", "label": "Yunwu API Key", "url": "https://yunwu.ai"}
             ]
         },
+        "5": {
+            "name": "Veo3 via Compass（Google Veo3，高质量写实短片）",
+            "backend": "veo3",
+            "provider": "compass",
+            "keys": [
+                {"key": "COMPASS_API_KEY", "label": "Compass API Key", "url": "https://compass.llm.shopee.io"}
+            ]
+        },
     }
 
     OPTIONAL_SERVICES = {
@@ -4431,8 +4447,8 @@ def main():
 
     # setup 子命令（交互式配置 provider + API key）
     setup_parser = subparsers.add_parser("setup", help="交互式配置 API provider 和密钥")
-    setup_parser.add_argument("--provider", dest="provider_choice", choices=["1", "2", "3", "4"],
-                              help="选择视频 provider: 1=Seedance, 2=Kling官方, 3=Kling(fal), 4=Vidu(yunwu)")
+    setup_parser.add_argument("--provider", dest="provider_choice", choices=["1", "2", "3", "4", "5"],
+                              help="选择视频 provider: 1=Seedance, 2=Kling官方, 3=Kling(fal), 4=Vidu(yunwu), 5=Veo3(compass)")
     setup_parser.add_argument("--set-key", nargs="+", metavar="KEY=VALUE",
                               help="设置 API key，格式: KEY=VALUE（可多个）")
 

@@ -38,6 +38,12 @@ python ~/.claude/skills/video-gen/video_gen_tools.py video --backend seedance --
 # Seedance 手动模式（兜底）
 python ~/.claude/skills/video-gen/video_gen_tools.py video --backend seedance --prompt "时间分段 prompt..." --image-list frame.png ref.jpg --duration 10 --output out.mp4
 
+# Veo3 文生视频（Google Veo3，仅支持 4/6/8s）
+python ~/.claude/skills/video-gen/video_gen_tools.py video --backend veo3 --prompt "描述..." --duration 8 --output out.mp4
+
+# Veo3 图生视频（首帧控制）
+python ~/.claude/skills/video-gen/video_gen_tools.py video --backend veo3 --image first_frame.png --prompt "描述..." --duration 8 --output out.mp4
+
 # 音乐生成
 python ~/.claude/skills/video-gen/video_gen_tools.py music --prompt <描述> --style <风格> --output <输出>
 
@@ -77,6 +83,19 @@ python ~/.claude/skills/video-gen/video_gen_tools.py vision <目录路径> --bat
 | `--image-list` | 手动模式：图片列表（分镜图在前，角色参考图在后） |
 | `--duration` | 手动模式：时长（自动对齐到 5/10/15） |
 
+### Veo3 参数说明
+
+| 参数 | 说明 |
+|------|------|
+| `--backend veo3` | 使用 Veo3 后端（需要 COMPASS_API_KEY） |
+| `--prompt` | 视频描述 |
+| `--image` | 可选：首帧图片路径（图生视频模式） |
+| `--duration` | 时长：仅支持 4/6/8 秒（自动对齐到最接近值） |
+| `--aspect-ratio` | 宽高比 |
+| `--output` | 输出文件路径 |
+
+**注意**：Veo3 默认生成音频，无需 `--audio` 参数。不支持 `--image-list`、`--multi-shot`、`--tail-image`。
+
 ### validate 参数说明
 
 | 参数 | 说明 |
@@ -86,6 +105,7 @@ python ~/.claude/skills/video-gen/video_gen_tools.py vision <目录路径> --bat
 **校验内容**：
 - Schema: `scenes[]`、`aspect_ratio` 存在性
 - Seedance: scene 总时长必须为 5/10/15
+- Veo3: 单 shot 时长必须为 4/6/8
 - Kling/Vidu: 单 shot 时长范围
 - Backend-mode 一致性
 - 参考图文件存在性
@@ -121,7 +141,7 @@ python ~/.claude/skills/video-gen/video_gen_editor.py color --video <视频> --p
 
 | 变量 | 用途 | 何时需要 |
 |------|------|---------|
-| COMPASS_API_KEY | Gemini 图片生成 + Gemini TTS | 图片/TTS 生成时（最高优先级） |
+| COMPASS_API_KEY | Gemini 图片生成 + Gemini TTS + **Veo3 视频** | 图片/TTS/Veo3 视频生成时 |
 | FAL_API_KEY | Gemini 图片生成 + Kling-Omni 视频（fal.ai 代理） | 图片/视频生成时（备用） |
 | YUNWU_API_KEY | Vidu/Kling/Kling-Omni 视频生成 + 图片生成（yunwu 代理） | 生成视频/图片时（最低优先级备用） |
 | KLING_ACCESS_KEY | Kling 视频生成 Access Key | 使用 Kling/Kling Omni 官方 API 时 |

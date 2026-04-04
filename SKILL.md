@@ -28,6 +28,7 @@ argument-hint: <素材目录或视频文件>
 | `kling-omni` | official, yunwu, fal | 官方 API 遇限制时可切换 |
 | `kling` | official, yunwu | 官方 API 遇限制时可切换 |
 | `vidu` | **仅 yunwu** | Vidu 只有 yunwu 一个 provider |
+| `veo3` | **仅 compass** | Veo3 只有 compass 一个 provider |
 
 当 Kling 官方 API 遇到并发限制（429）时，可使用 `--provider yunwu` 或 `--provider fal`：
 
@@ -62,6 +63,7 @@ python video_gen_tools.py video --provider fal --backend kling-omni --image-list
 | **广告片（有真实素材）** | Kling-3.0 / Vidu | — | 首帧精确控制，真实素材 |
 | **MV短片** | **Seedance** | Kling-Omni | 长镜头 + 音乐驱动 |
 | **Vlog/写实类** | Kling-3.0 | Vidu | 首帧精确控制，不走 Seedance |
+| **高质量写实短片** | **Veo3** | Kling-3.0 | Google Veo3 画质最佳，4/6/8s 短片 |
 
 **visual_style 只影响用户照片处理方式（如有用户照片）**：
 
@@ -142,6 +144,9 @@ python ~/.claude/skills/video-gen/video_gen_tools.py setup
 >
 > **4. Vidu via Yunwu** — 兜底方案
 >    - 需要：Yunwu API Key（from yunwu.ai）
+>
+> **5. Veo3 via Compass** — Google Veo3，高质量写实短片（4/6/8s）
+>    - 需要：Compass API Key（from compass.llm.shopee.io）
 
 用户选择后，要求提供对应的 API key，然后保存：
 
@@ -154,6 +159,9 @@ python ~/.claude/skills/video-gen/video_gen_tools.py setup --set-key KLING_ACCES
 
 # 例：用户选择 fal
 python ~/.claude/skills/video-gen/video_gen_tools.py setup --set-key FAL_API_KEY=xxx
+
+# 例：用户选择 Veo3
+python ~/.claude/skills/video-gen/video_gen_tools.py setup --set-key COMPASS_API_KEY=xxx
 ```
 
 **可选服务**（保存 key 后继续询问）：
@@ -500,6 +508,7 @@ storyboard["character_image_mapping"] = image_mapping
 | **广告片（有真实素材）** | Kling-3.0 / Vidu | — | 首帧精确控制，真实素材 |
 | **MV短片** | **Seedance** | Kling-Omni | 长镜头 + 音乐驱动 |
 | **Vlog/写实类** | Kling-3.0 | Vidu | 首帧精确控制，不走 Seedance |
+| **高质量写实短片** | **Veo3** | Kling-3.0 | Google Veo3 画质最佳，4/6/8s 短片 |
 
 **首帧控制能力对比**：
 
@@ -507,6 +516,7 @@ storyboard["character_image_mapping"] = image_mapping
 |------|---------|------|
 | **Kling-3.0** | ✅ `--image` | 视频从此图开始 |
 | **Vidu** | ✅ `--image` | 首帧精确控制 |
+| **Veo3** | ✅ `--image` | 首帧精确控制 |
 | **Seedance** | ❌ 参考图 | 分镜图是视觉风格参考，不是首帧 |
 | **Kling-Omni** | ❌ 参考图 | 只有 reference2video，无 img2video |
 
@@ -926,6 +936,21 @@ python ~/.claude/skills/video-gen/video_gen_tools.py video \
   --image-list frame.png ref.jpg \
   --duration 10 \
   --output output.mp4
+
+# Veo3 文生视频（Google Veo3，4/6/8s 高质量短片）
+python ~/.claude/skills/video-gen/video_gen_tools.py video \
+  --backend veo3 \
+  --prompt <描述> \
+  --duration 8 \
+  --output generated/videos/shot.mp4
+
+# Veo3 图生视频（首帧控制）
+python ~/.claude/skills/video-gen/video_gen_tools.py video \
+  --backend veo3 \
+  --image <首帧图> \
+  --prompt <描述> \
+  --duration 8 \
+  --output generated/videos/shot.mp4
 
 # 音乐（必须传 --creative，从 creative.json 读取 prompt 和 style）
 python ~/.claude/skills/video-gen/video_gen_tools.py music --creative creative/creative.json --output <输出>
