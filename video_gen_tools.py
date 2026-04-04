@@ -3,6 +3,7 @@
 Vico Tools - 视频创作API命令行工具集
 
 用法：
+  python video_gen_tools.py setup                                          # 交互式配置 API provider
   python video_gen_tools.py video --image <path> --prompt <text> --duration <seconds>
   python video_gen_tools.py music --prompt <text> --style <style>
   python video_gen_tools.py tts --text <text> --voice <voice_type>
@@ -205,6 +206,7 @@ class Config:
         return self.get("COMPASS_API_KEY", "")
 
     COMPASS_IMAGE_URL: str = "https://compass.llm.shopee.io/compass-api/v1/publishers/google/models/gemini-3.1-flash-image-preview:generateContent"
+    COMPASS_VIDEO_URL: str = "https://compass.llm.shopee.io/compass-api/v1/publishers/google/models/veo-3.1-generate-001"
 
     # Kling API
     @property
@@ -1956,6 +1958,196 @@ class SeedanceClient:
         await self.client.aclose()
 
 
+class Veo3Client:
+    """Google Veo3 视频生成客户端（通过 Compass 代理）"""
+
+    def __init__(self):
+        import httpx
+        self.client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0))
+        self.api_key = Config.COMPASS_API_KEY
+        self.base_url = Config.COMPASS_VIDEO_URL
+
+    async def close(self):
+        await self.client.aclose()
+
+    async def create_text2video(
+        self,
+        prompt: str,
+        duration: int = 8,
+        aspect_ratio: str = "16:9",
+        output: str = "output.mp4"
+    ) -> Dict[str, Any]:
+        """文生视频"""
+        return await self._generate(
+            prompt=prompt,
+            duration=duration,
+            aspect_ratio=aspect_ratio,
+            output=output
+        )
+
+    async def create_image2video(
+        self,
+        image_path: str,
+        prompt: str,
+        duration: int = 8,
+        aspect_ratio: str = "16:9",
+        output: str = "output.mp4"
+    ) -> Dict[str, Any]:
+        """图生视频（首帧图）"""
+        image_data = self._encode_image(image_path)
+        instance = {
+            "prompt": prompt,
+            "image": {
+                "inlineData": {
+                    "mimeType": self._get_mime_type(image_path),
+                    "data": image_data
+                }
+            }
+        }
+        return await self._generate(
+            prompt=prompt,
+            duration=duration,
+            aspect_ratio=aspect_ratio,
+            output=output,
+            instance_override=instance
+        )
+
+    async def _generate(
+        self,
+        prompt: str,
+        duration: int = 8,
+        aspect_ratio: str = "16:9",
+        output: str = "output.mp4",
+        instance_override: Dict = None
+    ) -> Dict[str, Any]:
+        """核心生成流程：提交 → 轮询 → 下载"""
+        # 校验时长
+        valid_durations = [4, 6, 8]
+        if duration not in valid_durations:
+            closest = min(valid_durations, key=lambda x: abs(x - duration))
+            logger.warning(f"⚠️ Veo3 duration {duration}s 不支持，调整为 {closest}s")
+            duration = closest
+
+        instance = instance_override or {"prompt": prompt}
+        if "prompt" not in instance:
+            instance["prompt"] = prompt
+
+        payload = {
+            "instances": [instance],
+            "parameters": {
+                "aspectRatio": aspect_ratio,
+                "durationSeconds": duration,
+                "personGeneration": "allow_all"
+            }
+        }
+
+        logger.info(f"📤 Veo3 视频生成: {prompt[:50]}... ({duration}s, {aspect_ratio})")
+
+        try:
+            response = await self.client.post(
+                f"{self.base_url}:predictLongRunning",
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.api_key}"
+                }
+            )
+            response.raise_for_status()
+            result = response.json()
+        except Exception as e:
+            return {"success": False, "error": f"Veo3 提交失败: {e}"}
+
+        operation_name = result.get("name")
+        if not operation_name:
+            return {"success": False, "error": f"无 operation name: {result}"}
+
+        logger.info(f"⏳ 任务已提交，等待生成...")
+
+        # 轮询
+        video_url = await self._wait_for_completion(operation_name)
+        if not video_url:
+            return {"success": False, "error": "Veo3 生成失败或超时"}
+
+        # 下载
+        await self._download_file(video_url, output)
+        return {
+            "success": True,
+            "output": output,
+            "video_url": video_url,
+            "duration": duration
+        }
+
+    async def _wait_for_completion(self, operation_name: str, max_wait: int = 600) -> Optional[str]:
+        """轮询任务状态"""
+        import time
+        start_time = time.monotonic()
+
+        while True:
+            elapsed = time.monotonic() - start_time
+            if elapsed > max_wait:
+                logger.error(f"❌ Veo3 任务超时 ({max_wait}秒)")
+                return None
+
+            try:
+                response = await self.client.post(
+                    f"{self.base_url}:fetchPredictOperation",
+                    json={"operationName": operation_name},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {self.api_key}"
+                    }
+                )
+                response.raise_for_status()
+                result = response.json()
+
+                if result.get("done"):
+                    # 检查是否有错误
+                    if "error" in result:
+                        error_msg = result["error"].get("message", "Unknown error")
+                        logger.error(f"❌ Veo3 任务失败: {error_msg}")
+                        return None
+
+                    # 提取视频 URL
+                    videos = result.get("response", {}).get("videos", [])
+                    if videos:
+                        video_url = videos[0].get("uri") or videos[0].get("gcsUri")
+                        cost = result.get("priceCostUsd", 0)
+                        logger.info(f"✅ Veo3 生成完成 (耗时: {int(elapsed)}秒, 费用: ${cost})")
+                        return video_url
+                    else:
+                        logger.error(f"❌ 响应中无视频: {result}")
+                        return None
+
+                logger.info(f"   [{int(elapsed)}s] 生成中...")
+                await asyncio.sleep(10)
+
+            except Exception as e:
+                logger.warning(f"⚠️ 轮询异常: {e}")
+                await asyncio.sleep(10)
+
+    async def _download_file(self, url: str, output_path: str):
+        """下载视频文件"""
+        import httpx
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        async with httpx.AsyncClient(timeout=300.0) as dl_client:
+            response = await dl_client.get(url)
+            response.raise_for_status()
+            with open(output_path, 'wb') as f:
+                f.write(response.content)
+        logger.info(f"✅ 已保存到: {output_path}")
+
+    def _encode_image(self, image_path: str) -> str:
+        """将图片编码为 base64"""
+        with open(image_path, 'rb') as f:
+            return base64.b64encode(f.read()).decode('utf-8')
+
+    def _get_mime_type(self, image_path: str) -> str:
+        """获取图片 MIME 类型"""
+        ext = os.path.splitext(image_path)[1].lower()
+        mime_map = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp'}
+        return mime_map.get(ext, 'image/png')
+
+
 class SunoClient:
     """Suno 音乐生成客户端"""
 
@@ -3362,6 +3554,43 @@ async def cmd_video(args):
         finally:
             await client.close()
 
+    elif backend == 'veo3':
+        if not Config.COMPASS_API_KEY:
+            print(json.dumps({
+                "success": False,
+                "error": "COMPASS_API_KEY 未配置",
+                "hint": "请在 config.json 中添加 COMPASS_API_KEY",
+                "get_key": "Compass API key 用于访问 Veo3 视频生成"
+            }, indent=2, ensure_ascii=False))
+            return 1
+
+        client = Veo3Client()
+        try:
+            if args.image:
+                result = await client.create_image2video(
+                    image_path=args.image,
+                    prompt=args.prompt,
+                    duration=args.duration,
+                    aspect_ratio=aspect_ratio,
+                    output=args.output
+                )
+            else:
+                result = await client.create_text2video(
+                    prompt=args.prompt,
+                    duration=args.duration,
+                    aspect_ratio=aspect_ratio,
+                    output=args.output
+                )
+
+            if result.get("success"):
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+                return 0
+            else:
+                print(f"错误: {result.get('error')}")
+                return 1
+        finally:
+            await client.close()
+
     else:
         # Vidu (Yunwu) 后端
         if not Config.YUNWU_API_KEY:
@@ -3620,6 +3849,130 @@ async def cmd_image(args):
         return 1
 
 
+async def cmd_setup(args):
+    """交互式配置 API provider 和密钥"""
+
+    # 定义所有可用的视频生成 provider 及其所需的 key
+    VIDEO_PROVIDERS = {
+        "1": {
+            "name": "Seedance（字节跳动，推荐虚构片/短剧/MV）",
+            "backend": "seedance",
+            "provider": "piapi",
+            "keys": [
+                {"key": "SEEDANCE_API_KEY", "label": "Seedance API Key (piapi)", "url": "https://piapi.ai"}
+            ]
+        },
+        "2": {
+            "name": "Kling 官方 API（快手，推荐写实/广告片）",
+            "backend": "kling",
+            "provider": "official",
+            "keys": [
+                {"key": "KLING_ACCESS_KEY", "label": "Kling Access Key", "url": "https://klingai.kuaishou.com"},
+                {"key": "KLING_SECRET_KEY", "label": "Kling Secret Key", "url": "https://klingai.kuaishou.com"}
+            ]
+        },
+        "3": {
+            "name": "Kling via fal.ai（绕过官方并发限制）",
+            "backend": "kling-omni",
+            "provider": "fal",
+            "keys": [
+                {"key": "FAL_API_KEY", "label": "fal.ai API Key", "url": "https://fal.ai"}
+            ]
+        },
+        "4": {
+            "name": "Vidu via Yunwu（兜底方案）",
+            "backend": "vidu",
+            "provider": "yunwu",
+            "keys": [
+                {"key": "YUNWU_API_KEY", "label": "Yunwu API Key", "url": "https://yunwu.ai"}
+            ]
+        },
+    }
+
+    OPTIONAL_SERVICES = {
+        "music": {
+            "name": "Suno 音乐生成",
+            "keys": [
+                {"key": "SUNO_API_KEY", "label": "Suno API Key", "url": "https://sunoapi.org"}
+            ]
+        },
+        "tts": {
+            "name": "火山引擎 TTS 语音合成",
+            "keys": [
+                {"key": "VOLCENGINE_TTS_APP_ID", "label": "火山引擎 App ID", "url": "https://www.volcengine.com/docs/656/79823"},
+                {"key": "VOLCENGINE_TTS_ACCESS_TOKEN", "label": "火山引擎 Access Token", "url": "https://www.volcengine.com/docs/656/79823"}
+            ]
+        },
+        "image": {
+            "name": "fal.ai 图片生成",
+            "keys": [
+                {"key": "FAL_API_KEY", "label": "fal.ai API Key", "url": "https://fal.ai"}
+            ]
+        },
+    }
+
+    config = load_config()
+
+    # 输出为 JSON，便于 Claude 解析
+    setup_info = {
+        "action": "setup",
+        "video_providers": {},
+        "optional_services": {},
+        "current_config": {}
+    }
+
+    for num, p in VIDEO_PROVIDERS.items():
+        setup_info["video_providers"][num] = {
+            "name": p["name"],
+            "backend": p["backend"],
+            "provider": p["provider"],
+            "required_keys": [{"key": k["key"], "label": k["label"], "url": k["url"],
+                               "configured": bool(config.get(k["key"]) or os.getenv(k["key"]))}
+                              for k in p["keys"]]
+        }
+
+    for svc_id, svc in OPTIONAL_SERVICES.items():
+        setup_info["optional_services"][svc_id] = {
+            "name": svc["name"],
+            "required_keys": [{"key": k["key"], "label": k["label"], "url": k["url"],
+                               "configured": bool(config.get(k["key"]) or os.getenv(k["key"]))}
+                              for k in svc["keys"]]
+        }
+
+    # 显示当前已配置的 keys
+    for key in ["SEEDANCE_API_KEY", "KLING_ACCESS_KEY", "KLING_SECRET_KEY", "FAL_API_KEY",
+                "YUNWU_API_KEY", "SUNO_API_KEY", "VOLCENGINE_TTS_APP_ID",
+                "VOLCENGINE_TTS_ACCESS_TOKEN", "COMPASS_API_KEY"]:
+        val = config.get(key) or os.getenv(key, "")
+        setup_info["current_config"][key] = f"{val[:4]}***" if val else "未设置"
+
+    # 非交互模式：带 --provider 参数时直接配置
+    provider_choice = getattr(args, 'provider_choice', None)
+    set_keys = getattr(args, 'set_key', None) or []
+
+    if set_keys:
+        for kv in set_keys:
+            if "=" in kv:
+                k, v = kv.split("=", 1)
+                config[k] = v
+                setup_info["saved"] = setup_info.get("saved", [])
+                setup_info["saved"].append(k)
+        save_config(config)
+        Config._cached_config = None  # 清除缓存
+        setup_info["status"] = "keys_saved"
+    elif provider_choice and provider_choice in VIDEO_PROVIDERS:
+        p = VIDEO_PROVIDERS[provider_choice]
+        setup_info["selected_provider"] = p["name"]
+        setup_info["need_keys"] = [k for k in p["keys"]
+                                   if not (config.get(k["key"]) or os.getenv(k["key"]))]
+        setup_info["status"] = "provider_selected"
+    else:
+        setup_info["status"] = "awaiting_selection"
+
+    print(json.dumps(setup_info, indent=2, ensure_ascii=False))
+    return 0
+
+
 async def cmd_check(args):
     """环境检查命令"""
     import shutil
@@ -3713,6 +4066,19 @@ async def cmd_check(args):
             "get_key_url": info["get_key"]
         }
 
+    # 检查是否至少有一个视频 provider 可用
+    has_video_provider = any([
+        Config.SEEDANCE_API_KEY,
+        Config.KLING_ACCESS_KEY and Config.KLING_SECRET_KEY,
+        Config.FAL_API_KEY,
+        Config.YUNWU_API_KEY,
+    ])
+    results["has_video_provider"] = has_video_provider
+    if not has_video_provider:
+        results["ready"] = False
+        results["missing"].append("没有配置任何视频生成 API key")
+        results["hints"].append("请先运行 setup 命令配置 API: python video_gen_tools.py setup")
+
     print(json.dumps(results, indent=2, ensure_ascii=False))
     return 0 if results["ready"] else 1
 
@@ -3723,6 +4089,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     subparsers = parser.add_subparsers(dest="command", help="可用命令")
+
+    # setup 子命令（交互式配置 provider + API key）
+    setup_parser = subparsers.add_parser("setup", help="交互式配置 API provider 和密钥")
+    setup_parser.add_argument("--provider", dest="provider_choice", choices=["1", "2", "3", "4"],
+                              help="选择视频 provider: 1=Seedance, 2=Kling官方, 3=Kling(fal), 4=Vidu(yunwu)")
+    setup_parser.add_argument("--set-key", nargs="+", metavar="KEY=VALUE",
+                              help="设置 API key，格式: KEY=VALUE（可多个）")
 
     # check 子命令
     subparsers.add_parser("check", help="检查环境依赖和配置")
@@ -3739,8 +4112,8 @@ def main():
     video_parser.add_argument("--output", "-o", help="输出文件路径")
     video_parser.add_argument("--provider", choices=["official", "yunwu", "fal"], default=None,
                               help="API provider (默认自动选择; vidu 仅支持 yunwu)")
-    video_parser.add_argument("--backend", "-b", choices=["vidu", "kling", "kling-omni", "seedance"], default="kling",
-                              help="视频生成后端 (默认 kling; vidu 为兜底; kling-omni 用于参考图; seedance 用于智能切镜)")
+    video_parser.add_argument("--backend", "-b", choices=["vidu", "kling", "kling-omni", "seedance", "veo3"], default="kling",
+                              help="视频生成后端 (默认 kling; vidu 为兜底; kling-omni 用于参考图; seedance 用于智能切镜; veo3 用于 Compass Veo3)")
     video_parser.add_argument("--mode", "-m", choices=["std", "pro"], default="std",
                               help="生成模式 (Kling 专用: std 或 pro)")
     video_parser.add_argument("--multi-shot", action="store_true",
@@ -3800,6 +4173,7 @@ def main():
 
     # 运行对应命令
     commands = {
+        "setup": cmd_setup,
         "check": cmd_check,
         "video": cmd_video,
         "music": cmd_music,

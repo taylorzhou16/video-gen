@@ -95,15 +95,15 @@ python video_gen_tools.py video --provider fal --backend kling-omni --image-list
 ## 快速启动流程
 
 ```
-环境检查 → 素材收集 → 创意确认 → 分镜设计 → 执行生成 → 剪辑输出
-   5秒        交互       交互        交互        自动        自动
+Provider 选择 → 环境检查 → 素材收集 → 创意确认 → 分镜设计 → 执行生成 → 剪辑输出
+    交互          5秒        交互       交互        交互        自动        自动
 ```
 
 ### 工作流进度清单
 
 ```
 Task Progress:
-- [ ] Phase 0: 环境检查（python video_gen_tools.py check）
+- [ ] Phase 0: Provider 配置 + 环境检查
 - [ ] Phase 1: 素材收集（扫描 + 视觉分析 + 人物识别）
 - [ ] Phase 2: 创意确认（问题卡片交互 + 角色参考图收集）
 - [ ] Phase 3: 分镜设计（生成 storyboard.json + 自动后端选择 + 用户确认）
@@ -113,14 +113,64 @@ Task Progress:
 
 ---
 
-## Phase 0: 环境检查
+## Phase 0: Provider 配置 + 环境检查
+
+### Step 1: 选择视频生成 Provider
+
+**必须在开始任何工作之前完成 API 配置。没有可用的 API key 时不得进入 Phase 1。**
+
+首先运行 setup 查看当前配置状态：
+
+```bash
+python ~/.claude/skills/video-gen/video_gen_tools.py setup
+```
+
+输出包含所有可选 provider 及其 key 配置状态。**如果没有任何视频 provider 的 key 已配置**，必须引导用户选择并配置：
+
+**向用户展示选项卡片**：
+
+> 请选择视频生成 API（可后续更换）：
+>
+> **1. Seedance（推荐）** — 字节跳动出品，智能切镜 + 多参考图，适合虚构片/短剧/MV
+>    - 需要：Seedance API Key（from piapi.ai）
+>
+> **2. Kling 官方** — 快手出品，首帧精确控制，适合写实/广告片
+>    - 需要：Kling Access Key + Secret Key（from klingai.kuaishou.com）
+>
+> **3. Kling via fal.ai** — 绕过官方并发限制
+>    - 需要：fal.ai API Key（from fal.ai）
+>
+> **4. Vidu via Yunwu** — 兜底方案
+>    - 需要：Yunwu API Key（from yunwu.ai）
+
+用户选择后，要求提供对应的 API key，然后保存：
+
+```bash
+# 例：用户选择 Seedance
+python ~/.claude/skills/video-gen/video_gen_tools.py setup --set-key SEEDANCE_API_KEY=sk-xxx
+
+# 例：用户选择 Kling 官方
+python ~/.claude/skills/video-gen/video_gen_tools.py setup --set-key KLING_ACCESS_KEY=xxx KLING_SECRET_KEY=xxx
+
+# 例：用户选择 fal
+python ~/.claude/skills/video-gen/video_gen_tools.py setup --set-key FAL_API_KEY=xxx
+```
+
+**可选服务**（保存 key 后继续询问）：
+- 音乐生成（Suno）：`SUNO_API_KEY`
+- TTS 语音合成（火山引擎）：`VOLCENGINE_TTS_APP_ID` + `VOLCENGINE_TTS_ACCESS_TOKEN`
+
+用户可以跳过可选服务。
+
+### Step 2: 环境检查
 
 ```bash
 python ~/.claude/skills/video-gen/video_gen_tools.py check
 ```
 
 - 基础依赖（FFmpeg/Python/httpx）不通过 → 停止并告知安装方法
-- API key 未配置 → 记录状态，后续按需询问
+- **至少一个视频 provider 的 API key 已配置** → 继续
+- **没有任何视频 API key** → 返回 Step 1，不得继续
 
 ---
 
