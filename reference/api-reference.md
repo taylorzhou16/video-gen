@@ -6,6 +6,9 @@
 # 环境检查
 python ~/.claude/skills/video-gen/video_gen_tools.py check
 
+# Storyboard 校验（Phase 4 执行前必须通过）
+python ~/.claude/skills/video-gen/video_gen_tools.py validate --storyboard storyboard/storyboard.json
+
 # 视频生成（Kling 后端，默认）
 python ~/.claude/skills/video-gen/video_gen_tools.py video --prompt <描述> --duration 5 --output <输出>
 python ~/.claude/skills/video-gen/video_gen_tools.py video --image <首帧图> --prompt <描述> --output <输出>
@@ -28,6 +31,12 @@ python ~/.claude/skills/video-gen/video_gen_tools.py video --backend kling-omni 
 
 # 自动后端选择（提供 --image-list 自动用 kling-omni，提供 --tail-image 自动用 kling）
 python ~/.claude/skills/video-gen/video_gen_tools.py video --prompt "<<<image_1>>> 在赛场" --image-list ref.jpg --output out.mp4
+
+# Seedance 自动组装模式（推荐：从 storyboard 自动计算时间分段、拼装 prompt、排列 image_urls）
+python ~/.claude/skills/video-gen/video_gen_tools.py video --backend seedance --storyboard storyboard/storyboard.json --scene scene_1 --output generated/videos/scene_1.mp4
+
+# Seedance 手动模式（兜底）
+python ~/.claude/skills/video-gen/video_gen_tools.py video --backend seedance --prompt "时间分段 prompt..." --image-list frame.png ref.jpg --duration 10 --output out.mp4
 
 # 音乐生成
 python ~/.claude/skills/video-gen/video_gen_tools.py music --prompt <描述> --style <风格> --output <输出>
@@ -57,6 +66,32 @@ python ~/.claude/skills/video-gen/video_gen_tools.py vision <目录路径> --bat
 | `--multi-prompt` | kling, kling-omni | 自定义分镜列表（JSON格式） |
 | `--audio` | kling, kling-omni | 启用音画同出 |
 | `--mode` | kling, kling-omni | `std`（标准）或 `pro`（高质量） |
+
+### Seedance 参数说明
+
+| 参数 | 说明 |
+|------|------|
+| `--backend seedance` | 使用 Seedance 后端 |
+| `--storyboard` + `--scene` | 自动组装模式：从 storyboard 读取 scene，自动计算时间分段、拼装 prompt、排列 image_urls、对齐 duration |
+| `--prompt` | 手动模式：直接指定时间分段 prompt（兜底用） |
+| `--image-list` | 手动模式：图片列表（分镜图在前，角色参考图在后） |
+| `--duration` | 手动模式：时长（自动对齐到 5/10/15） |
+
+### validate 参数说明
+
+| 参数 | 说明 |
+|------|------|
+| `--storyboard` | storyboard.json 路径（必填） |
+
+**校验内容**：
+- Schema: `scenes[]`、`aspect_ratio` 存在性
+- Seedance: scene 总时长必须为 5/10/15
+- Kling/Vidu: 单 shot 时长范围
+- Backend-mode 一致性
+- 参考图文件存在性
+- API key 可用性
+
+**输出格式**：`{"valid": bool, "errors": [...], "warnings": [...]}`
 
 ---
 

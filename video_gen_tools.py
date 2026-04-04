@@ -264,6 +264,278 @@ def get_music_config_from_creative(creative_path: str) -> Optional[Dict[str, Any
         return None
 
 
+def load_storyboard(storyboard_path: str) -> Optional[Dict[str, Any]]:
+    """加载 storyboard.json"""
+    try:
+        with open(storyboard_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"❌ 无法加载 storyboard: {e}")
+        return None
+
+
+# ============== Storyboard 校验 ==============
+
+VALID_ASPECT_RATIOS = ["16:9", "9:16", "4:3", "3:4", "1:1"]
+SEEDANCE_VALID_DURATIONS = [5, 10, 15]
+
+MODE_BACKEND_MAP = {
+    "seedance-video": "seedance",
+    "omni-video": "kling-omni",
+    "img2video": "kling",
+    "text2video": "kling",
+}
+
+BACKEND_PROVIDER_KEYS = {
+    "seedance": ["SEEDANCE_API_KEY"],
+    "kling": ["KLING_ACCESS_KEY", "YUNWU_API_KEY", "FAL_API_KEY"],
+    "kling-omni": ["KLING_ACCESS_KEY", "YUNWU_API_KEY", "FAL_API_KEY"],
+    "vidu": ["YUNWU_API_KEY"],
+}
+
+
+def validate_storyboard(storyboard_path: str) -> Dict[str, Any]:
+    """��验 storyboard.json，返回 {valid, errors, warnings}"""
+    errors = []
+    warnings = []
+
+    data = load_storyboard(storyboard_path)
+    if data is None:
+        return {"valid": False, "errors": [f"无法加载文件: {storyboard_path}"], "warnings": []}
+
+    # --- Schema basics ---
+    if "scenes" not in data or not isinstance(data.get("scenes"), list):
+        errors.append("缺少 scenes 数组")
+    if "aspect_ratio" not in data:
+        errors.append("缺�� aspect_ratio 字段")
+    elif data["aspect_ratio"] not in VALID_ASPECT_RATIOS:
+        errors.append(f"aspect_ratio '{data['aspect_ratio']}' 无效，支持: {VALID_ASPECT_RATIOS}")
+
+    scenes = data.get("scenes", [])
+    if not scenes:
+        errors.append("scenes 数组为空")
+        return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
+
+    # --- 收集 element IDs ---
+    characters = data.get("elements", {}).get("characters", [])
+    known_element_ids = {c.get("element_id") for c in characters if c.get("element_id")}
+
+    # --- 逐 Scene 校验 ---
+    for scene in scenes:
+        scene_id = scene.get("scene_id", "unknown")
+        shots = scene.get("shots", [])
+        if not shots:
+            warnings.append(f"[{scene_id}] 没有 shots")
+            continue
+
+        # 收集每个 shot 的后端信息
+        seedance_shots = []
+        for shot in shots:
+            shot_id = shot.get("shot_id", "unknown")
+            duration = shot.get("duration")
+            backend = shot.get("generation_backend", "")
+            mode = shot.get("generation_mode", "")
+
+            # 时长检查
+            if duration is None:
+                errors.append(f"[{shot_id}] 缺��� duration")
+                continue
+
+            # Backend-mode 一致性
+            expected_backend = MODE_BACKEND_MAP.get(mode)
+            if expected_backend and expected_backend != backend:
+                errors.append(
+                    f"[{shot_id}] generation_mode '{mode}' 应使用 backend '{expected_backend}'，"
+                    f"实际为 '{backend}'"
+                )
+
+            # 按后端类型校验时长
+            if backend == "vidu":
+                if duration < 5 or duration > 10:
+                    errors.append(f"[{shot_id}] Vidu 时长必须 5-10s，当前 {duration}s")
+            elif backend in ("kling", "kling-omni"):
+                if duration < 3 or duration > 15:
+                    errors.append(f"[{shot_id}] Kling 时长必须 3-15s，当前 {duration}s")
+
+            # Seedance shots 收集（后续按 scene 汇总）
+            if backend == "seedance":
+                seedance_shots.append(shot)
+
+            # 参考图文件存在性
+            for ref in shot.get("reference_images", []):
+                if ref and not os.path.exists(ref):
+                    warnings.append(f"[{shot_id}] ��考图不存在: {ref}")
+
+            # video_prompt 必须存在
+            if not shot.get("video_prompt"):
+                warnings.append(f"[{shot_id}] 缺少 video_prompt")
+
+            # 角色引用检查
+            for char in shot.get("characters", []):
+                char_id = char if isinstance(char, str) else char.get("element_id", "")
+                if char_id and char_id not in known_element_ids:
+                    warnings.append(f"[{shot_id}] 引用了未注册角色: {char_id}")
+
+        # Seedance scene 总时长校验
+        if seedance_shots:
+            total = sum(s.get("duration", 0) for s in seedance_shots)
+            if total not in SEEDANCE_VALID_DURATIONS:
+                closest = min(SEEDANCE_VALID_DURATIONS, key=lambda x: abs(x - total))
+                errors.append(
+                    f"[{scene_id}] Seedance scene 总时长 {total}s 无效，"
+                    f"必须为 {SEEDANCE_VALID_DURATIONS}（最接近: {closest}s）"
+                )
+
+    # --- Provider 可用性 ---
+    used_backends = set()
+    for scene in scenes:
+        for shot in scene.get("shots", []):
+            b = shot.get("generation_backend")
+            if b:
+                used_backends.add(b)
+
+    for backend in used_backends:
+        required_keys = BACKEND_PROVIDER_KEYS.get(backend, [])
+        if required_keys and not any(getattr(Config, k, "") for k in required_keys):
+            warnings.append(f"后端 '{backend}' 无可用 API key（需要: {' 或 '.join(required_keys)}）")
+
+    return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
+
+
+# ============== Seedance Prompt 自动组装 ==============
+
+def build_seedance_prompt(scene: Dict[str, Any], storyboard: Dict[str, Any]) -> tuple:
+    """
+    根据 storyboard 的 scene 自动组装 Seedance 时间分段 prompt。
+
+    Returns:
+        (prompt: str, image_urls: list[str], duration: int)
+    """
+    scene_id = scene.get("scene_id", "scene_1")
+    shots = scene.get("shots", [])
+    aspect_ratio = storyboard.get("aspect_ratio", "16:9")
+
+    # --- 计算总时长 ---
+    total_duration = sum(s.get("duration", 0) for s in shots)
+    # 对齐到最接近的 5/10/15
+    valid_duration = min(SEEDANCE_VALID_DURATIONS, key=lambda x: abs(x - total_duration))
+    if valid_duration != total_duration:
+        logger.warning(f"⚠️ Scene {scene_id} 总时长 {total_duration}s → 调整为 {valid_duration}s")
+        # 按比例调整各 shot 时长
+        if total_duration > 0:
+            ratio = valid_duration / total_duration
+            adjusted = []
+            remaining = valid_duration
+            for i, shot in enumerate(shots):
+                if i == len(shots) - 1:
+                    adjusted.append(max(1, remaining))
+                else:
+                    d = max(1, round(shot.get("duration", 0) * ratio))
+                    adjusted.append(d)
+                    remaining -= d
+            # 存入局部映射，避免污染原始 scene dict
+            duration_map = {i: adj for i, adj in enumerate(adjusted)}
+    else:
+        duration_map = None
+
+    # --- 收集角色参考图 ---
+    char_mapping = storyboard.get("character_image_mapping", {})
+    characters = storyboard.get("elements", {}).get("characters", [])
+
+    if not char_mapping and characters:
+        logger.warning("⚠️ character_image_mapping 为空，角色参考图将不会包含在 prompt 中")
+
+    # 找出此 scene 涉及的角色参考图（保持 image_N 顺序）
+    scene_char_refs = []
+    scene_char_tags = []
+    for char in characters:
+        eid = char.get("element_id", "")
+        tag = char_mapping.get(eid)
+        refs = char.get("reference_images", [])
+        if tag and refs:
+            scene_char_refs.append(refs[0])
+            scene_char_tags.append((tag, char.get("name", ""), eid))
+
+    # --- 查找分镜图 ---
+    frame_image = None
+    # 优先从第一个 shot 的 reference_images 中查找分镜图
+    if shots and shots[0].get("reference_images"):
+        first_refs = shots[0]["reference_images"]
+        for ref in first_refs:
+            if "frame" in ref.lower() or "frames" in ref.lower():
+                frame_image = ref
+                break
+        if not frame_image:
+            # 第一张如果不是角色参考图，当作分镜图
+            if first_refs[0] not in scene_char_refs:
+                frame_image = first_refs[0]
+
+    # --- 组装 image_urls ---
+    image_urls = []
+    if frame_image:
+        image_urls.append(frame_image)
+    image_urls.extend(scene_char_refs)
+
+    # --- 组装角色描述行 ---
+    char_desc_parts = []
+    for tag, name, eid in scene_char_tags:
+        tag_str = f"@image{tag.replace('image_', '')}" if tag.startswith("image_") else f"@{tag}"
+        char_desc_parts.append(f"{tag_str}（{name}）")
+    char_line = "，".join(char_desc_parts) if char_desc_parts else ""
+
+    # --- 组装视角/风格行（从 scene 或首个 shot 提取）---
+    visual_style = scene.get("visual_style", "")
+    narrative_goal = scene.get("narrative_goal", "")
+    style_desc = visual_style or narrative_goal or ""
+
+    # --- 组装时间分段 ---
+    time_offset = 0
+    segments = []
+    for idx, shot in enumerate(shots):
+        d = duration_map[idx] if duration_map else shot.get("duration", 0)
+        start = time_offset
+        end = time_offset + d
+        prompt_text = shot.get("video_prompt", shot.get("description", ""))
+        segments.append(f"{start}-{end}s：{prompt_text}；")
+        time_offset = end
+
+    # --- 组装完整 prompt ---
+    lines = []
+
+    # Referencing line
+    if frame_image:
+        lines.append(f"Referencing the {scene_id}_frame composition for scene layout and character positioning.")
+        lines.append("")
+
+    # 角色参考行
+    if char_line:
+        lines.append(f"{char_line}，{style_desc}；" if style_desc else f"{char_line}；")
+        lines.append("")
+
+    # 整体概述
+    scene_desc = scene.get("scene_name", "") or scene.get("narrative_goal", "")
+    if scene_desc:
+        lines.append(f"整体：{scene_desc}")
+        lines.append("")
+
+    # 分段动作
+    lines.append(f"分段动作（{valid_duration}s）：")
+    lines.extend(segments)
+    lines.append("")
+
+    # 比例约束
+    ratio_name = "横屏" if aspect_ratio == "16:9" else "竖屏" if aspect_ratio == "9:16" else ""
+    lines.append(f"保持{ratio_name}{aspect_ratio}构图，不破坏画面比例")
+    lines.append("No background music.")
+
+    prompt = "\n".join(lines)
+
+    logger.info(f"📝 Seedance prompt 自动组装完成 ({scene_id}, {valid_duration}s, {len(image_urls)} images)")
+    logger.debug(f"Prompt:\n{prompt}")
+
+    return prompt, image_urls, valid_duration
+
+
 # ============== Vidu 视频生成 ==============
 
 class ViduClient:
@@ -3234,6 +3506,16 @@ async def cmd_vision(args):
 
 async def cmd_video(args):
     """视频生成命令"""
+    # 参数互斥校验：必须指定 --prompt 或 (--storyboard + --scene)
+    has_prompt = bool(args.prompt)
+    has_scene = bool(getattr(args, 'scene', None) and getattr(args, 'storyboard', None))
+    if not has_prompt and not has_scene:
+        print(json.dumps({
+            "success": False,
+            "error": "必须指定 --prompt 或 --storyboard + --scene"
+        }, indent=2, ensure_ascii=False))
+        return 1
+
     provider = getattr(args, 'provider', None)
     backend = getattr(args, 'backend', 'kling')
 
@@ -3525,25 +3807,65 @@ async def cmd_video(args):
 
         client = SeedanceClient()
         try:
-            # Seedance 时长必须是 5/10/15 之一
-            valid_durations = [5, 10, 15]
-            if args.duration not in valid_durations:
-                closest = min(valid_durations, key=lambda x: abs(x - args.duration))
-                logger.warning(f"⚠️ Seedance duration {args.duration}s 不支持，调整为 {closest}s")
-                duration = closest
+            scene_id = getattr(args, 'scene', None)
+            storyboard_path = getattr(args, 'storyboard', None)
+
+            # --- 自动组装模式：--storyboard + --scene ---
+            if storyboard_path and scene_id:
+                storyboard_data = load_storyboard(storyboard_path)
+                if not storyboard_data:
+                    print(json.dumps({
+                        "success": False,
+                        "error": f"无法加载 storyboard: {storyboard_path}"
+                    }, indent=2, ensure_ascii=False))
+                    return 1
+
+                # 查找指定 scene
+                target_scene = None
+                for sc in storyboard_data.get("scenes", []):
+                    if sc.get("scene_id") == scene_id:
+                        target_scene = sc
+                        break
+                if not target_scene:
+                    print(json.dumps({
+                        "success": False,
+                        "error": f"未找到 scene: {scene_id}",
+                        "available": [s.get("scene_id") for s in storyboard_data.get("scenes", [])]
+                    }, indent=2, ensure_ascii=False))
+                    return 1
+
+                # 自动组装 prompt、image_urls、duration
+                prompt, image_urls, duration = build_seedance_prompt(target_scene, storyboard_data)
+                aspect_ratio = storyboard_data.get("aspect_ratio", aspect_ratio)
+
+                logger.info(f"🎬 Seedance 自动组装: scene={scene_id}, duration={duration}s, images={len(image_urls)}")
+
+                result = await client.submit_task(
+                    prompt=prompt,
+                    duration=duration,
+                    aspect_ratio=aspect_ratio,
+                    image_urls=image_urls if image_urls else None,
+                    output=args.output
+                )
             else:
-                duration = args.duration
+                # --- 手动模式（向后兼容）---
+                valid_durations = [5, 10, 15]
+                if args.duration not in valid_durations:
+                    closest = min(valid_durations, key=lambda x: abs(x - args.duration))
+                    logger.warning(f"⚠️ Seedance duration {args.duration}s 不支持，调整为 {closest}s")
+                    duration = closest
+                else:
+                    duration = args.duration
 
-            # 获取 image_list 参数（用于 I2V）
-            image_list = getattr(args, 'image_list', None)
+                image_list = getattr(args, 'image_list', None)
 
-            result = await client.submit_task(
-                prompt=args.prompt,
-                duration=duration,
-                aspect_ratio=aspect_ratio,
-                image_urls=image_list,
-                output=args.output
-            )
+                result = await client.submit_task(
+                    prompt=args.prompt,
+                    duration=duration,
+                    aspect_ratio=aspect_ratio,
+                    image_urls=image_list,
+                    output=args.output
+                )
 
             if result.get("success"):
                 print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -4083,6 +4405,23 @@ async def cmd_check(args):
     return 0 if results["ready"] else 1
 
 
+async def cmd_validate(args):
+    """校验 storyboard.json"""
+    result = validate_storyboard(args.storyboard)
+
+    # 输出结果
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    if result["errors"]:
+        logger.error(f"❌ 校验失败: {len(result['errors'])} 个错误")
+    if result["warnings"]:
+        logger.warning(f"⚠️ {len(result['warnings'])} 个警告")
+    if result["valid"]:
+        logger.info("✅ 校验通过")
+
+    return 0 if result["valid"] else 1
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Vico Tools - 视频创作API命令行工具",
@@ -4103,7 +4442,7 @@ def main():
     # video 子命令
     video_parser = subparsers.add_parser("video", help="生成视频")
     video_parser.add_argument("--image", "-i", help="输入图片路径或URL（图生视频）")
-    video_parser.add_argument("--prompt", "-p", required=True, help="视频描述")
+    video_parser.add_argument("--prompt", "-p", default=None, help="视频描述（Seedance --scene 模式下可省略）")
     video_parser.add_argument("--duration", "-d", type=int, default=5, help="时长(秒)")
     video_parser.add_argument("--resolution", "-r", default="720p", help="分辨率")
     video_parser.add_argument("--aspect-ratio", "-a", default=None, help="宽高比（如 16:9, 9:16）")
@@ -4126,6 +4465,7 @@ def main():
                               help="尾帧图片路径（用于首尾帧控制）")
     video_parser.add_argument("--image-list", nargs="+",
                               help="Omni-Video 多参考图路径列表（kling-omni 专用）")
+    video_parser.add_argument("--scene", help="Scene ID（Seedance 专用：配合 --storyboard 自动组装时间分段 prompt）")
 
     # music 子命令
     music_parser = subparsers.add_parser("music", help="生成音乐")
@@ -4165,6 +4505,10 @@ def main():
     vision_parser.add_argument("--batch", "-b", action="store_true", help="批量分析目录中的图片")
     vision_parser.add_argument("--prompt", "-p", default="请详细描述这张图片的内容，包括场景、主体、颜色、氛围等。", help="分析提示词")
 
+    # validate 子命令
+    validate_parser = subparsers.add_parser("validate", help="校验 storyboard.json")
+    validate_parser.add_argument("--storyboard", "-s", required=True, help="storyboard.json 路径")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -4180,6 +4524,7 @@ def main():
         "tts": cmd_tts,
         "image": cmd_image,
         "vision": cmd_vision,
+        "validate": cmd_validate,
     }
 
     return asyncio.run(commands[args.command](args))

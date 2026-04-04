@@ -605,6 +605,16 @@ storyboard["character_image_mapping"] = image_mapping
 
 ### Phase 4 执行前检查
 
+**0. Storyboard 校验（必须通过）**
+
+```bash
+python ~/.claude/skills/video-gen/video_gen_tools.py validate --storyboard storyboard/storyboard.json
+```
+
+校验内容：Seedance 时长是否为 5/10/15、backend-mode 是否匹配、参考图是否存在、aspect_ratio 格式、API key 是否可用。
+- 有 ERROR → 必须修复后再继续
+- 只有 WARNING → 可继续，但需关注
+
 **1. 参考图尺寸检查**
 - 从 storyboard.json 读取每个镜头的 `reference_images`
 - 检测所有参考图尺寸
@@ -712,93 +722,48 @@ python video_gen_tools.py video \
   --output generated/videos/scene1_shot1.mp4
 ```
 
-### Seedance 执行逻辑（特殊处理）
+### Seedance 执行逻辑（自动组装模式）
 
-**当 `generation_backend = "seedance"` 时，执行阶段需特殊处理**：
+**当 `generation_backend = "seedance"` 时，使用 `--scene` 参数自动组装时间分段 prompt**。
+
+工具会自动完成：时间分段计算、prompt 格式拼装、image_urls 排列、duration 对齐（5/10/15s）。
 
 #### 执行步骤
 
-**Step 1: 按 Scene 分组 shots**
-```
-读取 storyboard.json → 按 scene_id 分组 → 计算每组的总时长
-```
-
-**Step 2: 生成分镜图**
-- 每个 scene 生成一张分镜图（描述该 scene 的关键画面）
+**Step 1: 生成分镜图**
+- 每个 Seedance scene 生成一张分镜图
 - 使用 Gemini + 角色参考图生成
+- 保存到 `generated/frames/{scene_id}_frame.png`
 
-**Step 3: 生成时间分段 prompt**
-
-**必须使用以下完整格式**：
-
-```
-Referencing the {scene_id}_frame composition for scene layout and character positioning.
-
-@image1（角色参考图），[视角设定] [主题/风格]；
-
-整体：[该 Scene 整体动作概述]
-
-分段动作（{total_duration}s）：
-0-{shot1_duration}s：[shot1 动作描述] + [运镜] + [节奏] + [音效]；
-{shot1_end}-{shot2_end}s：[shot2 动作描述] + [运镜] + [节奏] + [音效]；
-...
-
-保持{比例}构图，不破坏画面比例
-No background music.
-```
-
-**Step 4: 计算 image_urls 顺序**
-- `[0]` = 分镜图
-- `[1+]` = 角色参考图
-
-#### 时间分段计算示例
-
-**storyboard.json**:
-```json
-{
-  "scenes": [{
-    "scene_id": "scene_1",
-    "shots": [
-      {"shot_id": "shot_1", "duration": 3, "description": "摘苹果"},
-      {"shot_id": "shot_2", "duration": 3, "description": "投入雪克杯"},
-      {"shot_id": "shot_3", "duration": 4, "description": "成品特写"}
-    ]
-  }]
-}
-```
-
-**时间分段 prompt**:
-```
-Referencing the scene_1_frame composition for scene layout and character positioning.
-
-@image1，第一人称视角果茶宣传广告；
-
-整体：第一人称视角展示果茶制作全过程，自然流畅。
-
-分段动作（10s）：
-0-3s：摘下红苹果，固定镜头，节奏平稳，苹果碰撞声；
-3-6s：投入雪克杯摇晃，镜头跟随，节奏轻快，冰块碰撞声；
-6-10s：成品特写展示，镜头推进，节奏舒缓，液体流动声；
-
-保持横屏16:9构图，不破坏画面比例
-No background music.
-```
-
-**关键**：
-- 时间必须连续（0-3s, 3-6s, 6-10s）
-- 每个 shot 对应一个时间段
-- 必须包含运镜 + 节奏描述（避免慢动作）
-
-#### 完整 CLI 调用
+**Step 2: 调用自动组装**
 
 ```bash
 python video_gen_tools.py video \
   --backend seedance \
-  --aspect-ratio 16:9 \
-  --prompt "Referencing the scene_1_frame composition... @image1... 分段动作（10s）：0-3s：...; 3-6s：...; 6-10s：...; 保持16:9构图 No background music." \
-  --image-list generated/frames/scene_1_frame.png materials/personas/ref.jpg \
-  --duration 10 \
+  --storyboard storyboard/storyboard.json \
+  --scene scene_1 \
   --output generated/videos/scene_1.mp4
+```
+
+工具内部自动：
+1. 读取 scene 的 shots，计算时间偏移量，拼装时间分段 prompt
+2. 从 `character_image_mapping` 解析角色参考图顺序
+3. 组装 `image_urls`（分镜图在前，角色参考图在后）
+4. 总时长自动对齐到最接近的 5/10/15s
+
+**关键**：确保分镜图路径已填入 shot 的 `reference_images`，且 `video_prompt` 包含运镜 + 节奏描述。
+
+#### 手动模式（兜底）
+
+自动组装不满足需求时，仍可手动指定 prompt：
+
+```bash
+python video_gen_tools.py video \
+  --backend seedance \
+  --prompt "手动编写的时间分段 prompt..." \
+  --image-list frame.png ref.jpg \
+  --duration 10 \
+  --output output.mp4
 ```
 
 ### API Key 管理
@@ -941,16 +906,26 @@ python video_gen_editor.py narration \
 # 环境检查
 python ~/.claude/skills/video-gen/video_gen_tools.py check
 
+# Storyboard 校验（Phase 4 执行前必须通过）
+python ~/.claude/skills/video-gen/video_gen_tools.py validate --storyboard storyboard/storyboard.json
+
 # 视频生成（必须从 storyboard.json 读取 aspect_ratio）
 python ~/.claude/skills/video-gen/video_gen_tools.py video --prompt <描述> --aspect-ratio {aspect_ratio} --output <输出>
 
-# Seedance 智能切镜（分镜图 + 角色参考图）
+# Seedance 自动组装模式（推荐：工具自动计算时间分段、拼装 prompt、排列 image_urls）
 python ~/.claude/skills/video-gen/video_gen_tools.py video \
   --backend seedance \
-  --prompt "Referencing the composition... @image1..." \
-  --image-list generated/frames/scene1_frame.png materials/personas/ref.jpg \
+  --storyboard storyboard/storyboard.json \
+  --scene scene_1 \
+  --output generated/videos/scene_1.mp4
+
+# Seedance 手动模式（兜底）
+python ~/.claude/skills/video-gen/video_gen_tools.py video \
+  --backend seedance \
+  --prompt "手动编写的时间分段 prompt..." \
+  --image-list frame.png ref.jpg \
   --duration 10 \
-  --output generated/videos/scene1.mp4
+  --output output.mp4
 
 # 音乐（必须传 --creative，从 creative.json 读取 prompt 和 style）
 python ~/.claude/skills/video-gen/video_gen_tools.py music --creative creative/creative.json --output <输出>
