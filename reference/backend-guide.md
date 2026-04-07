@@ -91,7 +91,7 @@
 | 参数 | 值 | 说明 |
 |------|-----|------|
 | `model` | `"seedance"` | 固定值 |
-| `task_type` | `"seedance-2-fast-preview"` / `"seedance-2-preview"` | 快速 / 高质量 |
+| `task_type` | `"seedance-2-fast"` / `"seedance-2"` | 快速 / 高质量 |
 | `prompt` | 文本描述 | 支持 `@imageN` 引用图片，支持时间分段 |
 | `duration` | **4-15（任意整数）** | 秒数（范围 4-15） |
 | `aspect_ratio` | **16:9/9:16/4:3/3:4/21:9** | 六种比例 |
