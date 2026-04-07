@@ -24,25 +24,21 @@ argument-hint: <素材目录或视频文件>
 
 | 后端 | 支持的 Provider | 说明 |
 |------|----------------|------|
-| `seedance` | **仅 piapi** | Seedance 只有 piapi 一个 provider，不支持 yunwu/fal |
-| `kling-omni` | official, yunwu, fal | 官方 API 遇限制时可切换 |
-| `kling` | official, yunwu | 官方 API 遇限制时可切换 |
-| `vidu` | **仅 yunwu** | Vidu 只有 yunwu 一个 provider |
+| `seedance` | **仅 piapi** | Seedance 只有 piapi 一个 provider |
+| `kling-omni` | official, fal | 官方 API 遇限制时可切换 |
+| `kling` | official, fal | 官方 API 遇限制时可切换 |
 | `veo3` | **仅 compass** | Veo3 只有 compass 一个 provider |
 
-当 Kling 官方 API 遇到并发限制（429）时，可使用 `--provider yunwu` 或 `--provider fal`：
+当 Kling 官方 API 遇到并发限制（429）时，可使用 `--provider fal`：
 
 ```bash
-# yunwu 代理（支持 Vidu/Kling/Kling-Omni）
-python video_gen_tools.py video --provider yunwu --backend kling-omni --image-list ref.jpg ...
-
-# fal.ai 代理（仅支持 kling-omni）
+# fal.ai 代理
 python video_gen_tools.py video --provider fal --backend kling-omni --image-list ref.jpg ...
 ```
 
-**注意**：Seedance 不需要指定 `--provider`，因为它只有 piapi 一个 provider。
+**注意**：Seedance 和 Veo3 不需要指定 `--provider`，因为它们各自只有一个 provider。
 
-**Provider 自动选择优先级**：官方 API → fal → yunwu
+**Provider 自动选择优先级**：官方 API → fal
 
 ---
 
@@ -60,9 +56,9 @@ python video_gen_tools.py video --provider fal --backend kling-omni --image-list
 |-----|---------|---------|------|
 | **虚构片/短剧** | **Seedance** | Kling-Omni | 智能切镜 + 多参考图，角色一致性 |
 | **广告片（无真实素材）** | **Seedance** | Kling-Omni | 长镜头 + 智能切镜 |
-| **广告片（有真实素材）** | Kling-3.0 / Vidu | — | 首帧精确控制，真实素材 |
+| **广告片（有真实素材）** | Kling-3.0 | — | 首帧精确控制，真实素材 |
 | **MV短片** | **Seedance** | Kling-Omni | 长镜头 + 音乐驱动 |
-| **Vlog/写实类** | Kling-3.0 | Vidu | 首帧精确控制，不走 Seedance |
+| **Vlog/写实类** | Kling-3.0 | — | 首帧精确控制，不走 Seedance |
 | **高质量写实短片** | **Veo3** | Kling-3.0 | Google Veo3 画质最佳，4/6/8s 短片 |
 
 **visual_style 只影响用户照片处理方式（如有用户照片）**：
@@ -142,10 +138,7 @@ python ~/.claude/skills/video-gen/video_gen_tools.py setup
 > **3. Kling via fal.ai** — 绕过官方并发限制
 >    - 需要：fal.ai API Key（from fal.ai）
 >
-> **4. Vidu via Yunwu** — 兜底方案
->    - 需要：Yunwu API Key（from yunwu.ai）
->
-> **5. Veo3 via Compass** — Google Veo3，高质量写实短片（4/6/8s）
+> **4. Veo3 via Compass** — Google Veo3，高质量写实短片（4/6/8s）
 >    - 需要：Compass API Key（from compass.llm.shopee.io）
 
 用户选择后，要求提供对应的 API key，然后保存：
@@ -166,7 +159,6 @@ python ~/.claude/skills/video-gen/video_gen_tools.py setup --set-key COMPASS_API
 
 **可选服务**（保存 key 后继续询问）：
 - 音乐生成（Suno）：`SUNO_API_KEY`
-- TTS 语音合成（火山引擎）：`VOLCENGINE_TTS_APP_ID` + `VOLCENGINE_TTS_ACCESS_TOKEN`
 
 用户可以跳过可选服务。
 
@@ -505,9 +497,9 @@ storyboard["character_image_mapping"] = image_mapping
 |-----|---------|---------|------|
 | **虚构片/短剧** | **Seedance** | Kling-Omni | 智能切镜 + 多参考图，角色一致性 |
 | **广告片（无真实素材）** | **Seedance** | Kling-Omni | 长镜头 + 智能切镜 |
-| **广告片（有真实素材）** | Kling-3.0 / Vidu | — | 首帧精确控制，真实素材 |
+| **广告片（有真实素材）** | Kling-3.0 | — | 首帧精确控制，真实素材 |
 | **MV短片** | **Seedance** | Kling-Omni | 长镜头 + 音乐驱动 |
-| **Vlog/写实类** | Kling-3.0 | Vidu | 首帧精确控制，不走 Seedance |
+| **Vlog/写实类** | Kling-3.0 | — | 首帧精确控制，不走 Seedance |
 | **高质量写实短片** | **Veo3** | Kling-3.0 | Google Veo3 画质最佳，4/6/8s 短片 |
 
 **首帧控制能力对比**：
@@ -515,7 +507,6 @@ storyboard["character_image_mapping"] = image_mapping
 | 后端 | 首帧控制 | 说明 |
 |------|---------|------|
 | **Kling-3.0** | ✅ `--image` | 视频从此图开始 |
-| **Vidu** | ✅ `--image` | 首帧精确控制 |
 | **Veo3** | ✅ `--image` | 首帧精确控制 |
 | **Seedance** | ❌ 参考图 | 分镜图是视觉风格参考，不是首帧 |
 | **Kling-Omni** | ❌ 参考图 | 只有 reference2video，无 img2video |
@@ -540,7 +531,7 @@ storyboard["character_image_mapping"] = image_mapping
 1. **时长设计（根据后端限制）**：
    | 后端 | Scene 总时长限制 | 设计策略 |
    |------|-----------------|---------|
-   | **Seedance** | **仅支持 5/10/15s**（枚举值） | 每个 scene 必须是 5/10/15s，shots 合并后不能超出 |
+   | **Seedance** | **4-15s**（任意整数） | scene 总时长 ≤15s 即可 |
    | Kling-Omni | 3-15s（连续范围） | scene 总时长 ≤15s 即可 |
    | Kling-3.0 | 3-15s（连续范围） | 每个单独 shot ≤15s |
    | Vidu | 5-10s | 每个 shot 5-10s |
@@ -621,7 +612,7 @@ storyboard["character_image_mapping"] = image_mapping
 python ~/.claude/skills/video-gen/video_gen_tools.py validate --storyboard storyboard/storyboard.json
 ```
 
-校验内容：Seedance 时长是否为 5/10/15、backend-mode 是否匹配、参考图是否存在、aspect_ratio 格式、API key 是否可用。
+校验内容：Seedance 时长是否在 4-15s 范围、backend-mode 是否匹配、参考图是否存在、aspect_ratio 格式、API key 是否可用。
 - 有 ERROR → 必须修复后再继续
 - 只有 WARNING → 可继续，但需关注
 
@@ -736,7 +727,7 @@ python video_gen_tools.py video \
 
 **当 `generation_backend = "seedance"` 时，使用 `--scene` 参数自动组装时间分段 prompt**。
 
-工具会自动完成：时间分段计算、prompt 格式拼装、image_urls 排列、duration 对齐（5/10/15s）。
+工具会自动完成：时间分段计算、prompt 格式拼装、image_urls 排列、duration 校验（4-15s 范围）。
 
 #### 执行步骤
 
@@ -759,7 +750,7 @@ python video_gen_tools.py video \
 1. 读取 scene 的 shots，计算时间偏移量，拼装时间分段 prompt
 2. 从 `character_image_mapping` 解析角色参考图顺序
 3. 组装 `image_urls`（分镜图在前，角色参考图在后）
-4. 总时长自动对齐到最接近的 5/10/15s
+4. 总时长在 4-15s 范围内任意整数即可
 
 **关键**：确保分镜图路径已填入 shot 的 `reference_images`，且 `video_prompt` 包含运镜 + 节奏描述。
 

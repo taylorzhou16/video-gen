@@ -13,27 +13,29 @@
 
 ---
 
-## 五种后端能力对比
+## 四种后端能力对比
 
-| 能力 | Vidu | Kling | Kling Omni | **Seedance** | **Veo3** |
-|------|------|-------|------------|--------------|----------|
-| **后端名** | `vidu` | `kling` | `kling-omni` | `seedance` | `veo3` |
-| **Provider** | yunwu | official/yunwu/fal | official/yunwu/fal | piapi | **compass** |
-| **文生视频** | 5-10s | 3-15s | 3-15s | **5/10/15s** | **4/6/8s** |
-| **图生视频** | 单图 | 首帧图（精确控制） | 用 image_list 代替 | 分镜图 + 参考图 | **首帧图** |
-| **image_list 多参考图** | -- | -- | `<<<image_1>>>` 引用 | **`@image1` 引用（最多 9 张）** | -- |
-| **智能切镜** | -- | multi-shot 参数控制 | multi-shot 参数控制 | **时间分段 prompt 自动触发** | -- |
-| **首尾帧控制** | -- | `--image` + `--tail-image` | -- | --（分镜图作为参考） | `--image`（首帧） |
-| **音画同出** | -- | `--audio` | `--audio` | **✓ 默认生成音频** | **✓ 默认生成音频** |
-| **最高分辨率** | 1080p | 1080p | 1080p | **720p** ⚠️ | **720p** |
-| **最佳场景** | 简单快速、兜底 | 首帧精确控制、场景一致 | 角色一致性、多人物 | **虚构片/短剧、智能切镜** | **高质量写实短片** |
+| 能力 | Kling | Kling Omni | **Seedance 2** | **Veo3** |
+|------|-------|------------|----------------|----------|
+| **后端名** | `kling` | `kling-omni` | `seedance` | `veo3` |
+| **Provider** | official/fal | official/fal | piapi | **compass** |
+| **文生视频** | 3-15s | 3-15s | **4-15s（任意整数）** | **4/6/8s** |
+| **图生视频** | 首帧图（精确控制） | 用 image_list 代替 | 分镜图 + 参考图 | **首帧图** |
+| **image_list 多参考图** | -- | `<<<image_1>>>` 引用 | **`@image1` 引用（最多 9 张）** | -- |
+| **智能切镜** | multi-shot 参数控制 | multi-shot 参数控制 | **时间分段 prompt 自动触发** | -- |
+| **首尾帧控制** | `--image` + `--tail-image` | -- | **支持（mode: first_last_frames）** | `--image`（首帧） |
+| **音画同出** | `--audio` | `--audio` | **✓ 默认生成音频** | **✓ 默认生成音频** |
+| **最高分辨率** | 1080p | 1080p | **720p** ⚠️ | **720p** |
+| **宽高比** | 16:9/9:16/1:1 | 16:9/9:16/1:1 | **16:9/9:16/4:3/3:4/21:9** | 16:9/9:16 |
+| **最佳场景** | 首帧精确控制、场景一致 | 角色一致性、多人物 | **虚构片/短剧、智能切镜** | **高质量写实短片** |
 
 **重要区别**：
 - Kling `--image` 是**首帧图**（视频从此图开始）
 - Kling Omni `--image-list` 是**参考图**（人物保持一致）
-- **Seedance 时间分段 = 自动 multi-shot**：无需额外参数，时间分段 prompt 自动触发智能切镜
-- **Seedance 分镜图是参考**：不是首帧精确控制，而是视觉风格参考
-- **Veo3 时长仅支持 4/6/8s**（枚举值），默认生成音频，画质最佳但时长较短
+- **Seedance 2 时间分段 = 自动 multi-shot**：无需额外参数，时间分段 prompt 自动触发智能切镜
+- **Seedance 2 分镜图是参考**：不是首帧精确控制，而是视觉风格参考
+- **Seedance 2 支持首尾帧控制**：使用 `--mode first_last_frames` + `--image-list`
+- **Seedance 2 时长 4-15s**（任意整数），**Veo3 时长仅支持 4/6/8s**（枚举值）
 
 ---
 
@@ -45,9 +47,9 @@
 |-----|---------|---------|------|
 | **虚构片/短剧** | **Seedance** | Kling-Omni | 智能切镜 + 多参考图，角色一致性 |
 | **广告片（无真实素材）** | **Seedance** | Kling-Omni | 长镜头 + 智能切镜 |
-| **广告片（有真实素材）** | Kling-3.0 / Vidu | — | 首帧精确控制，真实素材 |
+| **广告片（有真实素材）** | Kling-3.0 | — | 首帧精确控制，真实素材 |
 | **MV短片** | **Seedance** | Kling-Omni | 长镜头 + 音乐驱动 |
-| **Vlog/写实类** | Kling-3.0 | Vidu | 首帧精确控制，不走 Seedance |
+| **Vlog/写实类** | Kling-3.0 | — | 首帧精确控制，不走 Seedance |
 | **高质量写实短片** | **Veo3** | Kling-3.0 | Google Veo3 画质最佳，4/6/8s |
 | **超短镜头（≤ 4s）** | **Veo3** | Kling | Veo3 最短 4s，Kling 最短 3s |
 
@@ -56,7 +58,6 @@
 | 后端 | 首帧控制 | 说明 |
 |------|---------|------|
 | **Kling-3.0** | ✅ `--image` | 视频从此图开始 |
-| **Vidu** | ✅ `--image` | 首帧精确控制 |
 | **Veo3** | ✅ `--image` | 首帧精确控制 |
 | **Seedance** | ❌ 参考图 | 分镜图是视觉风格参考，不是首帧 |
 | **Kling-Omni** | ❌ 参考图 | 只有 reference2video，无 img2video |
@@ -81,7 +82,7 @@
 
 ---
 
-## Seedance 智能切镜模式
+## Seedance 2 智能切镜模式
 
 **核心特点**：时间分段 prompt 自动触发 multi-shot 智能切镜，无需额外参数。
 
@@ -92,15 +93,18 @@
 | `model` | `"seedance"` | 固定值 |
 | `task_type` | `"seedance-2-fast-preview"` / `"seedance-2-preview"` | 快速 / 高质量 |
 | `prompt` | 文本描述 | 支持 `@imageN` 引用图片，支持时间分段 |
-| `duration` | 5 / 10 / 15 | 秒数（仅支持这三个枚举值） |
-| `aspect_ratio` | 16:9/9:16/4:3/3:4 | 四种比例 |
+| `duration` | **4-15（任意整数）** | 秒数（范围 4-15） |
+| `aspect_ratio` | **16:9/9:16/4:3/3:4/21:9** | 六种比例 |
 | `image_urls` | 数组 | 最多 9 张参考图 |
+| `mode` | `text_to_video` / `first_last_frames` / `omni_reference` | 生成模式 |
+| `audio_urls` | 数组 | 音频参考（可选） |
+| `video_urls` | 数组 | 视频参考（可选） |
 
 ### 输出规格
 
 | 规格 | 值 |
 |------|-----|
-| 时长 | 5/10/15s（仅三个枚举值） |
+| 时长 | **4-15s（任意整数）** |
 | 分辨率 | 480p / 720p（最高 720p）⚠️ |
 | 音频 | 自动生成（AAC 立体声） |
 
@@ -182,12 +186,12 @@ python video_gen_tools.py video \
 
 | 场景 | 优先后端 | 兜底后端 | 原因 |
 |------|---------|---------|------|
-| **虚构片/短剧** | **Seedance** | Kling-Omni | 智能切镜 + 多参考图，角色一致性 |
-| **广告片（无真实素材）** | **Seedance** | Kling-Omni | 长镜头 + 智能切镜 |
+| **虚构片/短剧** | **Seedance 2** | Kling-Omni | 智能切镜 + 多参考图，角色一致性 |
+| **广告片（无真实素材）** | **Seedance 2** | Kling-Omni | 长镜头 + 智能切镜 |
 | **广告片（有真实素材）** | Kling-3.0 / Vidu | — | 首帧精确控制，真实素材 |
-| **MV短片** | **Seedance** | Kling-Omni | 长镜头 + 音乐驱动 |
+| **MV短片** | **Seedance 2** | Kling-Omni | 长镜头 + 音乐驱动 |
 | **Vlog/写实类** | Kling-3.0 | Vidu | 首帧精确控制，不走 Seedance |
-| **超短镜头（< 5s）** | Kling / Vidu | — | Seedance 最短 5s |
+| **超短镜头（≤ 4s）** | **Veo3** | Kling | Veo3 最短 4s，Kling 最短 3s |
 
 ---
 
@@ -206,24 +210,13 @@ python video_gen_tools.py video \
 |------|----------|------|
 | 有 KLING_ACCESS_KEY + KLING_SECRET_KEY | `official` | Kling 官方 API |
 | 有 FAL_API_KEY | `fal` | fal.ai 代理 |
-| 有 YUNWU_API_KEY | `yunwu` | yunwu.ai 代理 |
 
 **手动指定 provider**：
 
 ```bash
-# 使用 yunwu 代理（绕过官方 API 并发限制）
-python video_gen_tools.py video --provider yunwu --backend kling-omni --image-list ref.jpg ...
-
 # 使用 fal.ai 代理
 python video_gen_tools.py video --provider fal --backend kling-omni --image-list ref.jpg ...
 ```
-
-**yunwu vs fal 对比**：
-
-| Provider | 支持后端 | 优势 | 适用场景 |
-|----------|---------|------|---------|
-| `yunwu` | vidu, kling, kling-omni | 支持全系列、国内访问 | 官方 API 不可用时的首选备用 |
-| `fal` | kling-omni | 国际访问稳定 | 仅需 kling-omni 时的备选 |
 
 ---
 

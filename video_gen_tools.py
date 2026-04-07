@@ -205,9 +205,8 @@ class Config:
     def COMPASS_API_KEY(self) -> str:
         return self.get("COMPASS_API_KEY", "")
 
-    COMPASS_BASE_URL: str = "http://inner-api.us.migoo.ai/inbeeai/compass-api/v1"
-    COMPASS_IMAGE_URL: str = f"{COMPASS_BASE_URL}/publishers/google/models/gemini-3.1-flash-image-preview:generateContent"
-    COMPASS_VIDEO_URL: str = f"{COMPASS_BASE_URL}/publishers/google/models/veo-3.1-generate-001"
+    COMPASS_IMAGE_URL: str = "https://compass.llm.shopee.io/compass-api/v1/publishers/google/models/gemini-3.1-flash-image-preview:generateContent"
+    COMPASS_VIDEO_URL: str = "https://compass.llm.shopee.io/compass-api/v1/publishers/google/models/veo-3.1-generate-001"
 
     # Kling API
     @property
@@ -277,8 +276,7 @@ def load_storyboard(storyboard_path: str) -> Optional[Dict[str, Any]]:
 
 # ============== Storyboard 校验 ==============
 
-VALID_ASPECT_RATIOS = ["16:9", "9:16", "4:3", "3:4", "1:1"]
-SEEDANCE_VALID_DURATIONS = [5, 10, 15]
+VALID_ASPECT_RATIOS = ["16:9", "9:16", "4:3", "3:4", "1:1", "21:9"]
 
 MODE_BACKEND_MAP = {
     "seedance-video": "seedance",
@@ -291,9 +289,8 @@ MODE_BACKEND_MAP = {
 
 BACKEND_PROVIDER_KEYS = {
     "seedance": ["SEEDANCE_API_KEY"],
-    "kling": ["KLING_ACCESS_KEY", "YUNWU_API_KEY", "FAL_API_KEY"],
-    "kling-omni": ["KLING_ACCESS_KEY", "YUNWU_API_KEY", "FAL_API_KEY"],
-    "vidu": ["YUNWU_API_KEY"],
+    "kling": ["KLING_ACCESS_KEY", "FAL_API_KEY"],
+    "kling-omni": ["KLING_ACCESS_KEY", "FAL_API_KEY"],
     "veo3": ["COMPASS_API_KEY"],
 }
 
@@ -354,10 +351,7 @@ def validate_storyboard(storyboard_path: str) -> Dict[str, Any]:
                 )
 
             # 按后端类型校验时长
-            if backend == "vidu":
-                if duration < 5 or duration > 10:
-                    errors.append(f"[{shot_id}] Vidu 时长必须 5-10s，当前 {duration}s")
-            elif backend in ("kling", "kling-omni"):
+            if backend in ("kling", "kling-omni"):
                 if duration < 3 or duration > 15:
                     errors.append(f"[{shot_id}] Kling 时长必须 3-15s，当前 {duration}s")
             elif backend == "veo3":
@@ -383,14 +377,12 @@ def validate_storyboard(storyboard_path: str) -> Dict[str, Any]:
                 if char_id and char_id not in known_element_ids:
                     warnings.append(f"[{shot_id}] 引用了未注册角色: {char_id}")
 
-        # Seedance scene 总时长校验
+        # --- Seedance scene 总时长校验 ---
         if seedance_shots:
-            total = sum(s.get("duration", 0) for s in seedance_shots)
-            if total not in SEEDANCE_VALID_DURATIONS:
-                closest = min(SEEDANCE_VALID_DURATIONS, key=lambda x: abs(x - total))
+            scene_total_duration = sum(s.get("duration", 0) for s in seedance_shots)
+            if scene_total_duration < 4 or scene_total_duration > 15:
                 errors.append(
-                    f"[{scene_id}] Seedance scene 总时长 {total}s 无效，"
-                    f"必须为 {SEEDANCE_VALID_DURATIONS}（最接近: {closest}s）"
+                    f"[{scene_id}] Seedance scene 总时长必须在 4-15s 范围，当前 {scene_total_duration}s"
                 )
 
     # --- Provider 可用性 ---
@@ -424,26 +416,10 @@ def build_seedance_prompt(scene: Dict[str, Any], storyboard: Dict[str, Any]) -> 
 
     # --- 计算总时长 ---
     total_duration = sum(s.get("duration", 0) for s in shots)
-    # 对齐到最接近的 5/10/15
-    valid_duration = min(SEEDANCE_VALID_DURATIONS, key=lambda x: abs(x - total_duration))
+    # 校验时长范围（4-15s）
+    valid_duration = max(4, min(15, total_duration))
     if valid_duration != total_duration:
         logger.warning(f"⚠️ Scene {scene_id} 总时长 {total_duration}s → 调整为 {valid_duration}s")
-        # 按比例调整各 shot 时长
-        if total_duration > 0:
-            ratio = valid_duration / total_duration
-            adjusted = []
-            remaining = valid_duration
-            for i, shot in enumerate(shots):
-                if i == len(shots) - 1:
-                    adjusted.append(max(1, remaining))
-                else:
-                    d = max(1, round(shot.get("duration", 0) * ratio))
-                    adjusted.append(d)
-                    remaining -= d
-            # 存入局部映射，避免污染原始 scene dict
-            duration_map = {i: adj for i, adj in enumerate(adjusted)}
-    else:
-        duration_map = None
 
     # --- 收集角色参考图 ---
     char_mapping = storyboard.get("character_image_mapping", {})
@@ -499,7 +475,7 @@ def build_seedance_prompt(scene: Dict[str, Any], storyboard: Dict[str, Any]) -> 
     time_offset = 0
     segments = []
     for idx, shot in enumerate(shots):
-        d = duration_map[idx] if duration_map else shot.get("duration", 0)
+        d = shot.get("duration", 0)
         start = time_offset
         end = time_offset + d
         prompt_text = shot.get("video_prompt", shot.get("description", ""))
@@ -543,16 +519,29 @@ def build_seedance_prompt(scene: Dict[str, Any], storyboard: Dict[str, Any]) -> 
     return prompt, image_urls, valid_duration
 
 
-# ============== Vidu 视频生成 ==============
+# ============== Vidu 视频生成（已废弃） ==============
+
 
 class ViduClient:
-    """Vidu 视频生成客户端（通过 Yunwu API）"""
+    """
+    Vidu 视频生成客户端（通过 Yunwu API）
+
+    .. deprecated::
+        Vidu 后端已废弃，不再支持。请使用 Kling、Kling-Omni、Seedance 或 Veo3。
+        此类保留仅为向后兼容，将在未来版本中删除。
+    """
 
     IMG2VIDEO_PATH = "/ent/v2/img2video"
     TEXT2VIDEO_PATH = "/ent/v2/text2video"
     QUERY_PATH = "/ent/v2/tasks/{task_id}/creations"
 
     def __init__(self):
+        import warnings
+        warnings.warn(
+            "ViduClient 已废弃，请使用 KlingClient、KlingOmniClient、SeedanceClient 或 Veo3Client",
+            DeprecationWarning,
+            stacklevel=2
+        )
         import httpx
         self.client = httpx.AsyncClient(
             timeout=httpx.Timeout(120.0, connect=10.0),
@@ -760,11 +749,16 @@ class ViduClient:
         await self.client.aclose()
 
 
-# ============== Yunwu Kling 视频生成 ==============
+# ============== Yunwu Kling 视频生成（已废弃） ==============
+
 
 class YunwuKlingClient:
     """
     Kling v3 视频生成客户端（通过 Yunwu API）
+
+    .. deprecated::
+        Yunwu provider 已废弃，不再支持。请使用 Kling 官方 API 或 fal provider。
+        此类保留仅为向后兼容，将在未来版本中删除。
 
     只支持 kling-v3 模型，用于 text2video 和 img2video。
 
@@ -781,6 +775,12 @@ class YunwuKlingClient:
     MODEL = "kling-v3"  # 固定使用 kling-v3
 
     def __init__(self):
+        import warnings
+        warnings.warn(
+            "YunwuKlingClient 已废弃，请使用 KlingClient（官方 API）或 fal provider",
+            DeprecationWarning,
+            stacklevel=2
+        )
         import httpx
         self.client = httpx.AsyncClient(
             timeout=httpx.Timeout(120.0, connect=10.0),
@@ -1039,6 +1039,10 @@ class YunwuKlingOmniClient:
     """
     Kling v3 Omni 视频生成客户端（通过 Yunwu API）
 
+    .. deprecated::
+        Yunwu provider 已废弃，不再支持。请使用 Kling Omni 官方 API 或 fal provider。
+        此类保留仅为向后兼容，将在未来版本中删除。
+
     只支持 kling-v3-omni 模型，用于多参考图视频生成。
 
     与官方 API 的关键差异：
@@ -1053,6 +1057,12 @@ class YunwuKlingOmniClient:
     MODEL = "kling-v3-omni"  # 固定使用 kling-v3-omni
 
     def __init__(self):
+        import warnings
+        warnings.warn(
+            "YunwuKlingOmniClient 已废弃，请使用 KlingOmniClient（官方 API）或 fal provider",
+            DeprecationWarning,
+            stacklevel=2
+        )
         import httpx
         self.client = httpx.AsyncClient(
             timeout=httpx.Timeout(120.0, connect=10.0),
@@ -1983,31 +1993,33 @@ class FalKlingClient:
 
 class SeedanceClient:
     """
-    Seedance 视频生成客户端（通过 piapi.ai 代理）
+    Seedance 2 视频生成客户端（通过 piapi.ai 代理）
 
     核心能力：
-    - Text-to-Video: 直接传 prompt
-    - Image-to-Video: 传 image_urls（参考图）
-    - 时间分段 prompt: 自动触发 multi-shot 智能切镜
-    - Video Edit: 传 video_urls 编辑已有视频
+    - Text-to-Video: 直接传 prompt（mode: text_to_video）
+    - First/Last Frames: 1-2 张图片作为首尾帧（mode: first_last_frames）
+    - Omni Reference: 多模态参考 - 图片/视频/音频（mode: omni_reference）
 
     关键参数：
     - model: "seedance"（固定）
-    - task_type: "seedance-2-fast-preview"（快速）或 "seedance-2-preview"（高质量）
-    - duration: 仅支持 5 / 10 / 15 三个枚举值
-    - aspect_ratio: 仅支持 16:9 / 9:16 / 4:3 / 3:4 四种比例
-    - image_urls: 最多 9 张参考图
+    - task_type: "seedance-2-fast"（快速）或 "seedance-2"（高质量）
+    - mode: "text_to_video" | "first_last_frames" | "omni_reference"（必填）
+    - duration: 4-15 秒（任意整数）
+    - aspect_ratio: 21:9 | 16:9 | 4:3 | 1:1 | 3:4 | 9:16 | auto
+    - image_urls: 最多 12 张参考图
+    - video_urls: 最多 1 个参考视频（omni_reference 模式）
+    - audio_urls: 音频参考（omni_reference 模式，mp3/wav，≤15s）
 
     Prompt 语法：
     - 图片引用: "@image1" 引用第一张图片
-    - 时间分段: "0-2s：...；2-4s：...；4-6s：..."
+    - 视频引用: "@video1" 引用视频
+    - 音频引用: "@audio1" 引用音频
     """
 
     TASK_PATH = "/api/v1/task"
     STATUS_PATH = "/api/v1/task/{task_id}"
 
-    VALID_ASPECT_RATIOS = ["16:9", "9:16", "4:3", "3:4"]
-    VALID_DURATIONS = [5, 10, 15]
+    VALID_ASPECT_RATIOS = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16", "auto"]
 
     def __init__(self):
         import httpx
@@ -2026,6 +2038,8 @@ class SeedanceClient:
         aspect_ratio: str = "16:9",
         image_urls: List[str] = None,
         video_urls: List[str] = None,
+        audio_urls: List[str] = None,
+        mode: str = None,
         model: str = None,
         output: str = None
     ) -> Dict[str, Any]:
@@ -2033,20 +2047,29 @@ class SeedanceClient:
         提交视频生成任务
 
         Args:
-            prompt: 视频描述（支持时间分段、@imageN 引用）
-            duration: 时长（仅支持 5 / 10 / 15 三个枚举值）
-            aspect_ratio: 宽高比（仅支持 16:9 / 9:16 / 4:3 / 3:4）
-            image_urls: 参考图列表（最多 9 张）
-            video_urls: 视频编辑模式的参考视频
-            model: "seedance-2-fast-preview" 或 "seedance-2-preview"
+            prompt: 视频描述（支持 @imageN / @videoN / @audioN 引用）
+            duration: 时长（4-15 秒，任意整数）
+            aspect_ratio: 宽高比（21:9 | 16:9 | 4:3 | 1:1 | 3:4 | 9:16 | auto）
+            image_urls: 参考图列表（最多 12 张）
+            video_urls: 参考视频列表（omni_reference 模式）
+            audio_urls: 参考音频列表（omni_reference 模式，mp3/wav，≤15s）
+            mode: 生成模式（text_to_video | first_last_frames | omni_reference）
+            model: "seedance-2-fast" 或 "seedance-2"
             output: 输出文件路径
         """
-        # 参数校验 - duration 必须是 5/10/15 之一
-        if duration not in self.VALID_DURATIONS:
-            # 取最近的合法值
-            closest = min(self.VALID_DURATIONS, key=lambda x: abs(x - duration))
-            logger.warning(f"⚠️ duration {duration}s 不在支持列表中，自动调整为 {closest}s")
-            duration = closest
+        # 自动推断 mode
+        if mode is None:
+            if video_urls or audio_urls:
+                mode = "omni_reference"
+            elif image_urls and len(image_urls) <= 2:
+                mode = "omni_reference"  # 默认用 omni_reference 而非 first_last_frames
+            else:
+                mode = "text_to_video"
+
+        # duration 校验（4-15）
+        duration = max(4, min(15, duration))
+
+        # aspect_ratio 校验
         if aspect_ratio not in self.VALID_ASPECT_RATIOS:
             logger.warning(f"⚠️ aspect_ratio {aspect_ratio} 不在支持列表中，使用 16:9")
             aspect_ratio = "16:9"
@@ -2058,22 +2081,24 @@ class SeedanceClient:
             "task_type": model,
             "input": {
                 "prompt": prompt,
+                "mode": mode,
                 "aspect_ratio": aspect_ratio,
                 "duration": duration,
             }
         }
 
-        # 准备图片 URL
+        # 准备参考资源
         if image_urls:
             payload["input"]["image_urls"] = [self._prepare_url(img) for img in image_urls]
 
-        # 视频编辑模式
         if video_urls:
             payload["input"]["video_urls"] = [self._prepare_url(v) for v in video_urls]
-            payload["input"]["duration"] = 0  # Video edit 忽略 duration
+
+        if audio_urls:
+            payload["input"]["audio_urls"] = [self._prepare_url(a) for a in audio_urls]
 
         logger.info(f"📤 创建 Seedance 任务: {prompt[:80]}...")
-        logger.info(f"   参数: duration={duration}s, aspect_ratio={aspect_ratio}, model={model}")
+        logger.info(f"   参数: mode={mode}, duration={duration}s, aspect_ratio={aspect_ratio}, model={model}")
 
         try:
             response = await self.client.post(
@@ -2544,10 +2569,17 @@ class SunoClient:
         await self.client.aclose()
 
 
-# ============== Volcengine TTS ==============
+# ============== Volcengine TTS（已废弃） ==============
+
 
 class TTSClient:
-    """火山引擎 TTS 客户端"""
+    """
+    火山引擎 TTS 客户端
+
+    .. deprecated::
+        火山引擎 TTS 已废弃，不再支持。请使用 Gemini TTS（需要 COMPASS_API_KEY）。
+        此类保留仅为向后兼容，将在未来版本中删除。
+    """
 
     API_URL = "https://openspeech.bytedance.com/api/v1/tts"
 
@@ -2565,6 +2597,14 @@ class TTSClient:
         "gentle": "gentle",
         "serious": "serious",
     }
+
+    def __init__(self):
+        import warnings
+        warnings.warn(
+            "TTSClient（火山引擎）已废弃，请使用 GeminiTTSClient",
+            DeprecationWarning,
+            stacklevel=2
+        )
 
     async def synthesize(
         self,
@@ -2703,7 +2743,7 @@ class GeminiTTSClient:
             # 创建客户端
             client = texttospeech.TextToSpeechClient(
                 client_options=client_options.ClientOptions(
-                    api_endpoint=Config.COMPASS_BASE_URL,
+                    api_endpoint="https://compass.llm.shopee.io/compass-api/v1",
                     api_key=Config.COMPASS_API_KEY,
                 ),
                 transport="rest",
@@ -2850,7 +2890,20 @@ class ImageClient:
 
 
 class FalImageClient:
-    """Gemini 图片生成客户端（通过 fal.ai API）"""
+    """
+    Gemini 图片生成客户端（通过 fal.ai API）
+
+    .. deprecated::
+        Fal Image 已废弃，不再支持。请使用 CompassImageClient（需要 COMPASS_API_KEY）。
+    """
+
+    def __init__(self):
+        import warnings
+        warnings.warn(
+            "FalImageClient 已废弃，请使用 CompassImageClient",
+            DeprecationWarning,
+            stacklevel=2
+        )
 
     FAL_IMAGE_URL = "https://fal.run/fal-ai/gemini-3.1-flash-image-preview"
     FAL_IMAGE_EDIT_URL = "https://fal.run/fal-ai/gemini-3.1-flash-image-preview/edit"
@@ -3528,9 +3581,7 @@ async def cmd_video(args):
 
     # Provider 自动选择逻辑（如果用户未指定）
     if provider is None:
-        if backend == 'vidu':
-            provider = 'yunwu'  # vidu 只有 yunwu provider
-        elif backend == 'seedance':
+        if backend == 'seedance':
             provider = 'piapi'  # seedance 只有 piapi provider
         elif backend == 'veo3':
             provider = 'compass'  # veo3 只有 compass provider
@@ -3538,8 +3589,6 @@ async def cmd_video(args):
             provider = 'official'  # 优先使用官方 API
         elif Config.FAL_API_KEY:
             provider = 'fal'       # 其次使用 fal
-        elif Config.YUNWU_API_KEY:
-            provider = 'yunwu'     # 最后使用 yunwu
         else:
             provider = 'official'  # 默认，会报错提示配置
 
@@ -3592,7 +3641,7 @@ async def cmd_video(args):
         finally:
             await client.close()
 
-    # ==================== kling provider (官方 API 或 yunwu) ====================
+    # ==================== kling provider (官方 API) ====================
     # BackendRouter: 按功能需求强制切换
     # - image-list: kling-omni 和 seedance 都支持，不强制切换
     # - tail-image: 只有 kling 支持，需要强制切换
@@ -3601,88 +3650,6 @@ async def cmd_video(args):
     if tail_image and backend not in ['kling']:
         backend = 'kling'
         logger.info("🔀 检测到 --tail-image，自动切换到 kling 后端")
-
-    # ==================== yunwu provider ====================
-    if provider == 'yunwu':
-        if not Config.YUNWU_API_KEY:
-            print(json.dumps({
-                "success": False,
-                "error": "YUNWU_API_KEY 未配置",
-                "hint": "请在 config.json 中添加 YUNWU_API_KEY",
-                "get_key": "访问 https://yunwu.ai 注册获取 API key"
-            }, indent=2, ensure_ascii=False))
-            return 1
-
-        audio = args.audio if hasattr(args, 'audio') else False
-        duration = max(3, min(15, args.duration))
-
-        # 处理多镜头参数
-        multi_shot = getattr(args, 'multi_shot', False)
-        shot_type = getattr(args, 'shot_type', None)
-        multi_prompt = None
-        if getattr(args, 'multi_prompt', None):
-            try:
-                multi_prompt = json.loads(args.multi_prompt)
-            except json.JSONDecodeError:
-                print(json.dumps({
-                    "success": False,
-                    "error": "multi_prompt JSON 解析失败"
-                }, indent=2, ensure_ascii=False))
-                return 1
-
-        if backend == 'kling-omni':
-            client = YunwuKlingOmniClient()
-            try:
-                image_list = getattr(args, 'image_list', None)
-                result = await client.create_omni_video(
-                    prompt=args.prompt,
-                    duration=duration,
-                    mode=args.mode if hasattr(args, 'mode') else "std",
-                    aspect_ratio=aspect_ratio,
-                    audio=audio,
-                    image_list=image_list,
-                    multi_shot=multi_shot,
-                    shot_type=shot_type,
-                    multi_prompt=multi_prompt,
-                    output=args.output
-                )
-            finally:
-                await client.close()
-        else:
-            # kling backend
-            client = YunwuKlingClient()
-            try:
-                if args.image:
-                    result = await client.create_image2video(
-                        image_path=args.image,
-                        prompt=args.prompt,
-                        duration=duration,
-                        mode=args.mode if hasattr(args, 'mode') else "std",
-                        audio=audio,
-                        image_tail=getattr(args, 'tail_image', None),
-                        output=args.output
-                    )
-                else:
-                    result = await client.create_text2video(
-                        prompt=args.prompt,
-                        duration=duration,
-                        mode=args.mode if hasattr(args, 'mode') else "std",
-                        aspect_ratio=aspect_ratio,
-                        audio=audio,
-                        multi_shot=multi_shot,
-                        shot_type=shot_type,
-                        multi_prompt=multi_prompt,
-                        output=args.output
-                    )
-            finally:
-                await client.close()
-
-        if result.get("success"):
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-            return 0
-        else:
-            print(f"错误: {result.get('error')}")
-            return 1
 
     # ==================== official provider (官方 API) ====================
     # 检查对应后端的 API key
@@ -3858,21 +3825,27 @@ async def cmd_video(args):
                 )
             else:
                 # --- 手动模式（向后兼容）---
-                valid_durations = [5, 10, 15]
-                if args.duration not in valid_durations:
-                    closest = min(valid_durations, key=lambda x: abs(x - args.duration))
-                    logger.warning(f"⚠️ Seedance duration {args.duration}s 不支持，调整为 {closest}s")
-                    duration = closest
-                else:
-                    duration = args.duration
+                # Seedance 2 支持 4-15s 任意整数
+                duration = max(4, min(15, args.duration))
+                if duration != args.duration:
+                    logger.warning(f"⚠️ Seedance 2 duration 调整为 {duration}s（范围 4-15s）")
 
                 image_list = getattr(args, 'image_list', None)
+                mode = getattr(args, 'mode', 'text_to_video')
+                # 如果 mode 是 Kling 的 std/pro，则使用默认 text_to_video
+                if mode in ['std', 'pro']:
+                    mode = 'text_to_video'
+                audio_urls = getattr(args, 'audio_urls', None)
+                video_urls = getattr(args, 'video_urls', None)
 
                 result = await client.submit_task(
                     prompt=args.prompt,
                     duration=duration,
                     aspect_ratio=aspect_ratio,
                     image_urls=image_list,
+                    mode=mode,
+                    audio_urls=audio_urls,
+                    video_urls=video_urls,
                     output=args.output
                 )
 
@@ -3922,45 +3895,13 @@ async def cmd_video(args):
         finally:
             await client.close()
 
-    else:
-        # Vidu (Yunwu) 后端
-        if not Config.YUNWU_API_KEY:
-            print(json.dumps({
-                "success": False,
-                "error": "YUNWU_API_KEY 未配置",
-                "hint": "请设置环境变量: export YUNWU_API_KEY='your-api-key'",
-                "get_key": "访问 https://yunwu.ai 注册获取 API key"
-            }, indent=2, ensure_ascii=False))
-            return 1
-
-        client = ViduClient()
-        try:
-            if args.image:
-                result = await client.create_img2video(
-                    image_path=args.image,
-                    prompt=args.prompt,
-                    duration=args.duration,
-                    resolution=args.resolution,
-                    audio=args.audio,
-                    output=args.output
-                )
-            else:
-                result = await client.create_text2video(
-                    prompt=args.prompt,
-                    duration=args.duration,
-                    aspect_ratio=aspect_ratio,
-                    audio=args.audio,
-                    output=args.output
-                )
-
-            if result.get("success"):
-                print(json.dumps(result, indent=2, ensure_ascii=False))
-                return 0
-            else:
-                print(f"错误: {result.get('error')}")
-                return 1
-        finally:
-            await client.close()
+    # 未知后端
+    print(json.dumps({
+        "success": False,
+        "error": f"不支持的后端: {backend}",
+        "supported_backends": ["kling", "kling-omni", "seedance", "veo3"]
+    }, indent=2, ensure_ascii=False))
+    return 1
 
 
 async def cmd_music(args):
@@ -4029,53 +3970,25 @@ async def cmd_music(args):
 
 
 async def cmd_tts(args):
-    """TTS合成命令 - 优先使用 Gemini TTS，兜底使用火山引擎 TTS"""
-    # 优先使用 Gemini TTS（通过 Compass API）
-    if Config.COMPASS_API_KEY:
-        logger.info("🔧 使用 Gemini TTS (Compass)")
-        client = GeminiTTSClient()
-        result = await client.synthesize(
-            text=args.text,
-            output=args.output,
-            voice=args.voice,
-            emotion=args.emotion,
-            speed=args.speed,
-        )
-
-        if result.get("success"):
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-            return 0
-        else:
-            print(f"Gemini TTS 失败: {result.get('error')}")
-            # 尝试降级到火山引擎
-            if Config.VOLCENGINE_TTS_APP_ID and Config.VOLCENGINE_TTS_TOKEN:
-                print("降级到火山引擎 TTS...")
-            else:
-                print(json.dumps({
-                    "success": False,
-                    "error": "Gemini TTS 失败且火山引擎 TTS 未配置",
-                    "hint": "请配置 COMPASS_API_KEY 或 VOLCENGINE_TTS 凭证"
-                }, indent=2, ensure_ascii=False))
-                return 1
-
-    # 兜底使用火山引擎 TTS
-    if not Config.VOLCENGINE_TTS_APP_ID or not Config.VOLCENGINE_TTS_TOKEN:
+    """TTS合成命令 - 使用 Gemini TTS（通过 Compass API）"""
+    if not Config.COMPASS_API_KEY:
         print(json.dumps({
             "success": False,
-            "error": "TTS 凭证未配置",
-            "hint": "请配置 COMPASS_API_KEY（推荐）或火山引擎 TTS 凭证",
-            "get_key": "COMPASS_API_KEY 优先级更高"
+            "error": "COMPASS_API_KEY 未配置",
+            "hint": "请配置 COMPASS_API_KEY 以使用 Gemini TTS",
+            "get_key": "访问 compass.llm.shopee.io 获取 API key"
         }, indent=2, ensure_ascii=False))
         return 1
 
-    logger.info("🔧 使用火山引擎 TTS")
-    client = TTSClient()
+    logger.info("🔧 使用 Gemini TTS (Compass)")
+    client = GeminiTTSClient()
     result = await client.synthesize(
         text=args.text,
         output=args.output,
         voice=args.voice,
         emotion=args.emotion,
-        speed=args.speed
+        speed=args.speed,
+        prompt=getattr(args, 'prompt', None),
     )
 
     if result.get("success"):
@@ -4091,11 +4004,9 @@ async def cmd_image(args):
     # Provider 自动选择逻辑
     provider = getattr(args, 'provider', None)
     if provider is None:
-        # 优先级：compass → fal → yunwu（yunwu 放最后）
+        # 优先级：compass → yunwu
         if Config.COMPASS_API_KEY:
             provider = 'compass'
-        elif Config.FAL_API_KEY:
-            provider = 'fal'
         elif Config.GEMINI_API_KEY:  # GEMINI_API_KEY 实际上是 YUNWU_API_KEY
             provider = 'yunwu'
         else:
@@ -4124,26 +4035,6 @@ async def cmd_image(args):
             return 1
 
         client = CompassImageClient()
-        result = await client.generate(
-            prompt=args.prompt,
-            output=args.output,
-            style=args.style,
-            aspect_ratio=aspect_ratio,
-            reference_images=args.reference
-        )
-
-    # fal provider
-    elif provider == 'fal':
-        if not Config.FAL_API_KEY:
-            print(json.dumps({
-                "success": False,
-                "error": "FAL_API_KEY 未配置",
-                "hint": "请在 config.json 中添加 FAL_API_KEY",
-                "get_key": "访问 https://fal.ai 获取 API key"
-            }, indent=2, ensure_ascii=False))
-            return 1
-
-        client = FalImageClient()
         result = await client.generate(
             prompt=args.prompt,
             output=args.output,
@@ -4211,14 +4102,6 @@ async def cmd_setup(args):
             ]
         },
         "4": {
-            "name": "Vidu via Yunwu（兜底方案）",
-            "backend": "vidu",
-            "provider": "yunwu",
-            "keys": [
-                {"key": "YUNWU_API_KEY", "label": "Yunwu API Key", "url": "https://yunwu.ai"}
-            ]
-        },
-        "5": {
             "name": "Veo3 via Compass（Google Veo3，高质量写实短片）",
             "backend": "veo3",
             "provider": "compass",
@@ -4233,19 +4116,6 @@ async def cmd_setup(args):
             "name": "Suno 音乐生成",
             "keys": [
                 {"key": "SUNO_API_KEY", "label": "Suno API Key", "url": "https://sunoapi.org"}
-            ]
-        },
-        "tts": {
-            "name": "火山引擎 TTS 语音合成",
-            "keys": [
-                {"key": "VOLCENGINE_TTS_APP_ID", "label": "火山引擎 App ID", "url": "https://www.volcengine.com/docs/656/79823"},
-                {"key": "VOLCENGINE_TTS_ACCESS_TOKEN", "label": "火山引擎 Access Token", "url": "https://www.volcengine.com/docs/656/79823"}
-            ]
-        },
-        "image": {
-            "name": "fal.ai 图片生成",
-            "keys": [
-                {"key": "FAL_API_KEY", "label": "fal.ai API Key", "url": "https://fal.ai"}
             ]
         },
     }
@@ -4393,16 +4263,6 @@ async def cmd_check(args):
             "purpose": "Suno 音乐生成",
             "get_key": "https://sunoapi.org"
         },
-        "VOLCENGINE_TTS_APP_ID": {
-            "value": Config.VOLCENGINE_TTS_APP_ID,
-            "purpose": "火山引擎 TTS App ID",
-            "get_key": "https://www.volcengine.com/docs/656/79823"
-        },
-        "VOLCENGINE_TTS_ACCESS_TOKEN": {
-            "value": Config.VOLCENGINE_TTS_TOKEN,
-            "purpose": "火山引擎 TTS Access Token",
-            "get_key": "https://www.volcengine.com/docs/656/79823"
-        },
     }
 
     for name, info in env_vars.items():
@@ -4421,7 +4281,6 @@ async def cmd_check(args):
         Config.COMPASS_API_KEY,
         Config.KLING_ACCESS_KEY and Config.KLING_SECRET_KEY,
         Config.FAL_API_KEY,
-        Config.YUNWU_API_KEY,
     ])
     results["has_video_provider"] = has_video_provider
     if not has_video_provider:
@@ -4459,8 +4318,8 @@ def main():
 
     # setup 子命令（交互式配置 provider + API key）
     setup_parser = subparsers.add_parser("setup", help="交互式配置 API provider 和密钥")
-    setup_parser.add_argument("--provider", dest="provider_choice", choices=["1", "2", "3", "4", "5"],
-                              help="选择视频 provider: 1=Seedance, 2=Kling官方, 3=Kling(fal), 4=Vidu(yunwu), 5=Veo3(compass)")
+    setup_parser.add_argument("--provider", dest="provider_choice", choices=["1", "2", "3", "4"],
+                              help="选择视频 provider: 1=Seedance, 2=Kling官方, 3=Kling(fal), 4=Veo3(compass)")
     setup_parser.add_argument("--set-key", nargs="+", metavar="KEY=VALUE",
                               help="设置 API key，格式: KEY=VALUE（可多个）")
 
@@ -4477,12 +4336,12 @@ def main():
     video_parser.add_argument("--storyboard", "-s", help="storyboard.json 路径，自动读取 aspect_ratio")
     video_parser.add_argument("--audio", action="store_true", help="生成原生音频")
     video_parser.add_argument("--output", "-o", help="输出文件路径")
-    video_parser.add_argument("--provider", choices=["official", "yunwu", "fal", "compass"], default=None,
-                              help="API provider (默认自动选择; vidu 仅支持 yunwu; veo3 仅支持 compass)")
-    video_parser.add_argument("--backend", "-b", choices=["vidu", "kling", "kling-omni", "seedance", "veo3"], default="kling",
-                              help="视频生成后端 (默认 kling; vidu 为兜底; kling-omni 用于参考图; seedance 用于智能切镜; veo3 用于 Compass Veo3)")
-    video_parser.add_argument("--mode", "-m", choices=["std", "pro"], default="std",
-                              help="生成模式 (Kling 专用: std 或 pro)")
+    video_parser.add_argument("--provider", choices=["official", "fal", "compass"], default=None,
+                              help="API provider (默认自动选择; veo3 仅支持 compass)")
+    video_parser.add_argument("--backend", "-b", choices=["kling", "kling-omni", "seedance", "veo3"], default="kling",
+                              help="视频生成后端 (默认 kling; kling-omni 用于参考图; seedance 用于智能切镜; veo3 用于高质量写实短片)")
+    video_parser.add_argument("--mode", "-m", choices=["std", "pro", "text_to_video", "first_last_frames", "omni_reference"], default="std",
+                              help="生成模式 (Kling: std 或 pro; Seedance: text_to_video, first_last_frames, omni_reference)")
     video_parser.add_argument("--multi-shot", action="store_true",
                               help="启用 Kling 多镜头模式")
     video_parser.add_argument("--shot-type", choices=["intelligence", "customize"],
@@ -4492,8 +4351,12 @@ def main():
     video_parser.add_argument("--tail-image", type=str,
                               help="尾帧图片路径（用于首尾帧控制）")
     video_parser.add_argument("--image-list", nargs="+",
-                              help="Omni-Video 多参考图路径列表（kling-omni 专用）")
+                              help="Omni-Video 多参考图路径列表（kling-omni 专用）；或 Seedance 首尾帧模式的首尾帧图")
     video_parser.add_argument("--scene", help="Scene ID（Seedance 专用：配合 --storyboard 自动组装时间分段 prompt）")
+    video_parser.add_argument("--audio-urls", nargs="+",
+                              help="音频参考 URL 列表（Seedance 2 专用）")
+    video_parser.add_argument("--video-urls", nargs="+",
+                              help="视频参考 URL 列表（Seedance 2 专用）")
 
     # music 子命令
     music_parser = subparsers.add_parser("music", help="生成音乐")
@@ -4509,10 +4372,12 @@ def main():
     tts_parser.add_argument("--text", "-t", required=True, help="要合成的文本")
     tts_parser.add_argument("--output", "-o", required=True, help="输出文件路径")
     tts_parser.add_argument("--voice", "-v", default="female_narrator",
-                           choices=["female_narrator", "female_gentle", "male_narrator", "male_warm"],
+                           choices=["female_narrator", "female_gentle", "female_soft", "female_bright",
+                                    "male_narrator", "male_warm", "male_deep", "male_bright"],
                            help="音色")
     tts_parser.add_argument("--emotion", "-e", choices=["neutral", "happy", "sad", "gentle", "serious"],
-                           help="情感")
+                           help="情感（已废弃，建议使用 --prompt）")
+    tts_parser.add_argument("--prompt", "-p", help="风格指令，控制口音/情感/语气/人设（如：幽默解说，略带调侃）")
     tts_parser.add_argument("--speed", type=float, default=1.0, help="语速")
 
     # image 子命令
@@ -4524,7 +4389,7 @@ def main():
     image_parser.add_argument("--aspect-ratio", "-a", default=None, help="宽高比")
     image_parser.add_argument("--storyboard", help="storyboard.json 路径，自动读取 aspect_ratio")
     image_parser.add_argument("--reference", "-r", nargs="+", help="参考图路径（支持多个，重要人物放后面）")
-    image_parser.add_argument("--provider", choices=["compass", "fal", "yunwu"], default=None,
+    image_parser.add_argument("--provider", choices=["compass", "yunwu"], default=None,
                               help="API provider (默认自动选择: compass 优先)")
 
     # vision 子命令（内置多模态分析）
