@@ -30,12 +30,13 @@
 - ✅ **创意生成** - 交互式问题卡片，定制视频创意方案
 - ✅ **分镜设计** - 生成分镜脚本和视频生成 Prompt
 - ✅ **AI 视频生成**
-  - **Kling v3**（默认）：3-15秒、首帧精确控制、画面质感好
+  - **Seedance 2**（推荐虚构片）：4-15秒、智能切镜、多参考图、音画同出
+  - **Kling v3**：3-15秒、首帧精确控制、画面质感好
   - **Kling v3 Omni**：3-15秒、多参考图、角色一致性最佳
-  - **Vidu Q3 Pro**（兜底）：图生视频/文生视频（5-10秒）
-- ✅ **AI 音乐生成** - Suno V4.5 背景音乐
-- ✅ **TTS 语音合成** - 火山引擎 TTS
-- ✅ **AI 图片生成** - Gemini 图片生成
+  - **Veo3**：4/6/8秒、高质量写实短片
+- ✅ **AI 音乐生成** - Suno V3.5 背景音乐
+- ✅ **TTS 语音合成** - Gemini TTS（多种音色、风格提示）
+- ✅ **AI 图片生成** - Gemini 3.1 Flash Image（compass/yunwu）
 - ✅ **视频剪辑** - 转场、字幕、调色、变速、音频混合
 
 ## 💡 使用建议
@@ -126,23 +127,24 @@ python video_gen_tools.py image --prompt "<描述>" --style cinematic --output i
 
 | 后端 | 模型 | 时长 | 特点 |
 |------|------|------|------|
-| **Seedance** | seedance-2.0 | 5/10/15s | 智能切镜、多参考图（最多9张）、音画同出 |
+| **Seedance 2** | seedance-2 | 4-15s | 智能切镜、多参考图（最多9张）、首尾帧控制、音画同出 |
 | **Kling Omni** | kling-3.0-omni | 3-15s | 多参考图(reference2video)、角色一致性、音画同出 |
 | **Kling** | kling-3.0 | 3-15s | 首帧精确控制(img2video)、画面质感好 |
-| **Vidu**（兜底） | vidu-q3-pro | 5-10s | 稳定、快速、首帧控制 |
+| **Veo3** | veo-3.1-generate-001 | 4/6/8s | 高质量写实短片、首帧控制、默认音频 |
 
 **关键区别**：
-- **Seedance / Kling Omni** 支持多参考图（角色一致性），但**不支持首帧控制**
-- **Kling / Vidu** 支持首帧控制，但不支持多参考图
+- **Seedance 2 / Kling Omni** 支持多参考图（角色一致性），Seedance 2 还支持首尾帧控制
+- **Kling / Veo3** 支持首帧精确控制
 
 **选择建议**：
 | 场景 | 优先后端 | 兜底后端 | 原因 |
 |-----|---------|---------|------|
-| **虚构片/短剧** | **Seedance** | Kling-Omni | 智能切镜 + 多参考图 |
-| **广告片（无真实素材）** | **Seedance** | Kling-Omni | 长镜头 + 智能切镜 |
-| **广告片（有真实素材）** | Kling-3.0 / Vidu | — | 首帧精确控制 |
-| **MV短片** | **Seedance** | Kling-Omni | 长镜头 + 音乐驱动 |
-| **Vlog/写实类** | Kling-3.0 | Vidu | 首帧精确控制 |
+| **虚构片/短剧** | **Seedance 2** | Kling-Omni | 智能切镜 + 多参考图 |
+| **广告片（无真实素材）** | **Seedance 2** | Kling-Omni | 长镜头 + 智能切镜 |
+| **广告片（有真实素材）** | Kling-3.0 | — | 首帧精确控制 |
+| **MV短片** | **Seedance 2** | Kling-Omni | 长镜头 + 音乐驱动 |
+| **Vlog/写实类** | Kling-3.0 | Veo3 | 首帧精确控制 |
+| **高质量写实短片** | **Veo3** | Kling-3.0 | 画质最佳 |
 
 ### video_gen_editor.py
 
@@ -169,33 +171,27 @@ python video_gen_editor.py speed --video video.mp4 --rate 1.5 --output out.mp4
 ## 🔑 环境变量
 
 ```bash
-# Yunwu API - 用于 Vidu 视频生成 + 图片生成（备用）
-export YUNWU_API_KEY="your-api-key"
+# Seedance API - Seedance 2 视频生成（推荐虚构片/短剧）
+export SEEDANCE_API_KEY="your-seedance-api-key"
 
-# Kling API - 用于 Kling 视频生成
+# Kling API - Kling v3 视频生成（推荐写实/Vlog）
 export KLING_ACCESS_KEY="your-access-key"
 export KLING_SECRET_KEY="your-secret-key"
+
+# Veo3 API - Google Veo3 视频生成（高质量写实短片）
+export COMPASS_API_KEY="your-compass-api-key"
 
 # Suno 音乐生成
 export SUNO_API_KEY="your-api-key"
 
-# 火山引擎 TTS
-export VOLCENGINE_TTS_APP_ID="your-app-id"
-export VOLCENGINE_TTS_ACCESS_TOKEN="your-token"
-
-# fal.ai API - 用于图片生成（备用）
-export FAL_API_KEY="your-fal-api-key"
-
-# Compass API - 用于图片生成（最高优先级）
+# Gemini 图片生成（compass 优先）
 export COMPASS_API_KEY="your-compass-api-key"
-
-# Seedance API - 用于 Seedance 视频生成（通过 piapi.ai 代理）
-export SEEDANCE_API_KEY="your-seedance-api-key"
+export YUNWU_API_KEY="your-yunwu-api-key"  # 备用
 ```
 
 **注意**：
-- **图片生成 Provider 优先级**：compass → fal → yunwu
-- **视频生成 Provider 优先级**：official → fal → yunwu
+- **视频生成 Provider**：Seedance（piapi）、Kling（official/fal）、Veo3（compass）
+- **图片生成 Provider 优先级**：compass → yunwu
 
 ## 🔄 工作流程
 
@@ -225,6 +221,38 @@ export SEEDANCE_API_KEY="your-seedance-api-key"
 - httpx（HTTP 客户端）
 
 ## 📋 更新日志
+
+### v1.6.0 (2026-04-07)
+🔄 **Provider 体系重构 + Seedance 2 升级**
+
+#### 废弃清理
+- 🗑️ **移除 yunwu 视频生成 Provider** — Vidu/Kling/Kling-Omni 的 yunwu provider 全部废弃，yunwu 仅保留 Gemini 图片生成
+- 🗑️ **移除 FalImageClient** — 图片生成仅保留 compass/yunwu 两个 provider
+- 🗑️ **废弃火山引擎 TTS** — TTS 仅保留 Gemini TTS（通过 Compass API）
+- 🗑️ **移除 Vidu 后端** — 不再支持 Vidu 视频生成
+
+#### Seedance 2 升级
+- ✨ **时长支持扩展** — 从 5/10/15s 枚举值改为 4-15s 任意整数
+- ✨ **新增 21:9 宽高比** — 支持电影级宽银幕比例
+- ✨ **新增 `--mode` 参数** — `text_to_video` / `first_last_frames` / `omni_reference`
+- ✨ **新增 `--audio-urls` / `--video-urls`** — 支持音频/视频参考
+- ✨ **首尾帧控制** — `mode: first_last_frames` 支持首尾帧精确控制
+
+#### 架构优化
+- 🔄 **Provider 矩阵简化** — 视频 4 后端（Seedance/Kling/Kling-Omni/Veo3），图片 2 provider（compass/yunwu）
+- 🔄 **TTS 统一为 Gemini** — 移除火山引擎 TTS 调用路径
+- 📝 **文档全面更新** — SKILL.md、backend-guide.md、api-reference.md 同步更新
+
+#### 当前支持模型
+| 类型 | 模型 | Provider |
+|------|------|----------|
+| 视频 | Seedance 2 | piapi |
+| 视频 | Kling v3 | official / fal |
+| 视频 | Kling v3 Omni | official / fal |
+| 视频 | Veo3 | compass |
+| 图片 | Gemini 3.1 Flash Image | compass / yunwu |
+| TTS | Gemini TTS | compass |
+| 音乐 | Suno V3.5 | official |
 
 ### v1.5.1 (2026-04-03)
 🎤 **Gemini TTS 集成**
