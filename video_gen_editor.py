@@ -852,7 +852,8 @@ async def add_narration(
             start = 0
 
         # 延迟音频到正确的时间点
-        audio_idx = len(inputs) // 2  # 当前音频的输入索引
+        # audio_idx: 视频是输入0，第一个旁白是输入1，第二个是输入2...
+        audio_idx = i + 1
         filter_parts.append(f"[{audio_idx}:a]adelay={int(start*1000)}|{int(start*1000)},volume={narration_volume}[narr{i}]")
         audio_mix_parts.append(f"[narr{i}]")
 
