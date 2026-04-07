@@ -222,6 +222,12 @@ export YUNWU_API_KEY="your-yunwu-api-key"  # 备用
 
 ## 📋 更新日志
 
+### v1.6.1 (2026-04-07)
+🐛 **Bug 修复**
+
+- 🐛 **Seedance 自动组装模式图片路径解析** — CLI 运行目录与项目目录不一致时，相对路径无法正确解析，导致 `FileNotFoundError`。新增 `resolve_path()` 函数自动将相对路径转换为绝对路径
+- 🐛 **narration 命令 audio_idx 计算错误** — FFmpeg filter_complex 中音频输入索引计算错误（`len(inputs) // 2` → `i + 1`），导致多旁白场景引用不存在的输入流
+
 ### v1.6.0 (2026-04-07)
 🔄 **Provider 体系重构 + Seedance 2 升级**
 
