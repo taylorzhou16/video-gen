@@ -2194,6 +2194,7 @@ class SeedanceClient:
         """将本地文件转为 data URI 格式的 base64
 
         注意：piapi.ai 对请求体大小有限制，大图片需要压缩
+        但图片分辨率不能太小，否则会报 "material is too small" 错误
         """
         # 检查文件大小
         file_size = os.path.getsize(file_path)
@@ -2207,16 +2208,40 @@ class SeedanceClient:
                 import io
 
                 img = Image.open(file_path)
-                # 缩小到 512x512 以内
-                img.thumbnail((512, 512), Image.Resampling.LANCZOS)
-                # 转为 RGB（去除 alpha 通道）
-                img = img.convert('RGB')
 
-                # 保存为 JPEG
-                buffer = io.BytesIO()
-                img.save(buffer, format='JPEG', quality=70)
+                # 先尝试不改变分辨率，只调整 JPEG quality
+                # 如果 quality=50 仍然超过 100KB，再考虑缩小分辨率
+                for quality in [70, 50, 30]:
+                    buffer = io.BytesIO()
+                    img_rgb = img.convert('RGB') if img.mode != 'RGB' else img
+                    img_rgb.save(buffer, format='JPEG', quality=quality)
+                    compressed_size = buffer.tell()
+
+                    if compressed_size <= max_size:
+                        data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                        logger.info(f"✅ 压缩完成 ({len(data)/1024:.1f}KB, quality={quality})")
+                        return f"data:image/jpeg;base64,{data}"
+
+                # 如果 quality=30 仍然太大，才缩小分辨率（但保持最小边 >= 720px）
+                img_resized = img.copy()
+                while True:
+                    w, h = img_resized.size
+                    min_dim = min(w, h)
+                    if min_dim <= 720:
+                        # 已经小到 720px，不能再小了
+                        break
+                    # 缩小 20%
+                    new_w, new_h = int(w * 0.8), int(h * 0.8)
+                    img_resized = img_resized.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+                    buffer = io.BytesIO()
+                    img_rgb = img_resized.convert('RGB') if img_resized.mode != 'RGB' else img_resized
+                    img_rgb.save(buffer, format='JPEG', quality=50)
+                    if buffer.tell() <= max_size:
+                        break
+
                 data = base64.b64encode(buffer.getvalue()).decode('utf-8')
-                logger.info(f"✅ 压缩完成 ({len(data)/1024:.1f}KB)")
+                logger.info(f"✅ 压缩完成 ({len(data)/1024:.1f}KB, resized to {img_resized.size})")
                 return f"data:image/jpeg;base64,{data}"
             except Exception as e:
                 logger.warning(f"⚠️ 图片压缩失败，使用原始图片: {e}")
@@ -2260,7 +2285,16 @@ class SeedanceClient:
 
                 elif status == "failed":
                     error = data.get("error", {})
-                    logger.error(f"❌ Seedance 任务失败: {error.get('message', 'Unknown')}")
+                    logs = data.get("logs", [])
+                    # logs 中通常包含更详细的错误原因
+                    error_detail = error.get("message", "Unknown")
+                    if logs:
+                        # 找出第一个非空的有意义的日志
+                        for log in logs:
+                            if log and "restored" not in log.lower():
+                                error_detail = log
+                                break
+                    logger.error(f"❌ Seedance 任务失败: {error_detail}")
                     return None
 
                 await asyncio.sleep(10)
