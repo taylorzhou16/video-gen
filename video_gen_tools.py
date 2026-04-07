@@ -2083,8 +2083,8 @@ class SeedanceClient:
         if mode is None:
             if video_urls or audio_urls:
                 mode = "omni_reference"
-            elif image_urls and len(image_urls) <= 2:
-                mode = "omni_reference"  # 默认用 omni_reference 而非 first_last_frames
+            elif image_urls:
+                mode = "omni_reference"
             else:
                 mode = "text_to_video"
 
@@ -3854,9 +3854,12 @@ async def cmd_video(args):
 
                 image_list = getattr(args, 'image_list', None)
                 mode = getattr(args, 'mode', 'text_to_video')
-                # 如果 mode 是 Kling 的 std/pro，则使用默认 text_to_video
+                # 如果 mode 是 Kling 的 std/pro，则根据是否有参考图自动选择
                 if mode in ['std', 'pro']:
-                    mode = 'text_to_video'
+                    if image_list:
+                        mode = 'omni_reference'  # 有参考图时用 omni_reference
+                    else:
+                        mode = 'text_to_video'  # 纯文生视频
                 audio_urls = getattr(args, 'audio_urls', None)
                 video_urls = getattr(args, 'video_urls', None)
 
