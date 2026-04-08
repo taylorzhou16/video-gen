@@ -2774,7 +2774,7 @@ class GeminiTTSClient:
             voice: 音色名称或预设（female_narrator, male_narrator 等）
             emotion: 已废弃，请使用 prompt 或 inline 标注
             speed: 语速（Gemini TTS 暂不支持）
-            prompt: 风格指令，控制口音/情感/语气/人设
+            prompt: 风格指令，控制口音/情感/语气/语速/人设
             language_code: 语言代码（cmn-CN, en-US, ja-JP 等）
         """
         from google.cloud import texttospeech
@@ -2786,6 +2786,11 @@ class GeminiTTSClient:
                 "error": "COMPASS_API_KEY 未配置",
                 "hint": "请在 config.json 中添加 COMPASS_API_KEY"
             }
+
+        # 中文旁白自动添加语速指令
+        if language_code == "cmn-CN" and not prompt:
+            prompt = "语速偏快，干脆利落，自然流畅"
+            logger.info(f"📝 中文旁白自动添加 prompt: {prompt}")
 
         # 获取音色配置
         voice_name = voice
@@ -2834,15 +2839,54 @@ class GeminiTTSClient:
             with open(output, "wb") as f:
                 f.write(response.audio_content)
 
-            # 估算时长（约 15KB/秒）
-            duration_ms = int(len(response.audio_content) / 15 * 1000)
-            logger.info(f"✅ Gemini TTS已保存: {output} (约 {duration_ms}ms)")
+            # 用 ffprobe 获取精确时长
+            duration = get_audio_duration(output)
+            duration_ms = int(duration * 1000)
+            logger.info(f"✅ Gemini TTS已保存: {output} ({duration:.2f}s)")
 
-            return {"success": True, "output": output, "duration_ms": duration_ms}
+            return {"success": True, "output": output, "duration": duration, "duration_ms": duration_ms}
 
         except Exception as e:
             logger.error(f"❌ Gemini TTS失败: {e}")
             return {"success": False, "error": str(e)}
+
+
+def get_audio_duration(audio_path: str) -> float:
+    """
+    用 ffprobe 获取音频精确时长（秒）
+
+    Args:
+        audio_path: 音频文件路径
+
+    Returns:
+        时长（秒，浮点数）
+    """
+    import subprocess
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+        capture_output=True, text=True
+    )
+    return float(result.stdout.strip())
+
+
+def get_video_duration(video_path: str) -> float:
+    """
+    用 ffprobe 获取视频精确时长（秒）
+
+    Args:
+        video_path: 视频文件路径
+
+    Returns:
+        时长（秒，浮点数）
+    """
+    import subprocess
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+        capture_output=True, text=True
+    )
+    return float(result.stdout.strip())
 
 
 # ============== Gemini 图片生成（通过 Yunwu API）==============

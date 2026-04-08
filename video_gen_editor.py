@@ -893,6 +893,303 @@ async def add_narration(
         return {"success": False, "error": msg}
 
 
+def get_audio_duration_sync(audio_path: str) -> float:
+    """
+    用 ffprobe 获取音频精确时长（秒）
+    同步版本，用于在 async 函数中调用
+    """
+    import subprocess
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+        capture_output=True, text=True
+    )
+    return float(result.stdout.strip())
+
+
+def calculate_shot_times(storyboard: dict) -> dict:
+    """
+    计算每个镜头的起始时间
+
+    Returns:
+        {shot_id: start_time_in_seconds}
+    """
+    shot_times = {}
+    current_time = 0
+
+    for scene in storyboard.get("scenes", []):
+        for shot in scene.get("shots", []):
+            shot_id = shot["shot_id"]
+            shot_times[shot_id] = current_time
+            current_time += shot["duration"]
+
+    return shot_times
+
+
+def calculate_narration_times(
+    segments_info: list,
+    video_duration: float,
+    gap: float = 0.5
+) -> tuple:
+    """
+    计算不重叠的旁白时间点
+
+    Args:
+        segments_info: 包含每段旁白信息的列表
+        video_duration: 视频总时长
+        gap: 段与段之间的间隔（秒）
+
+    Returns:
+        (time_points, warnings)
+        - time_points: [{"start_time": x, "end_time": y, "skipped": bool}, ...]
+        - warnings: 警告信息列表
+    """
+    time_points = []
+    warnings = []
+    current_time = 0  # 上一段旁白结束的时间点
+
+    # 计算总旁白时长
+    total_narration = sum(seg["duration"] for seg in segments_info)
+    total_gap = gap * (len(segments_info) - 1) if len(segments_info) > 1 else 0
+    required_duration = total_narration + total_gap
+
+    if required_duration > video_duration:
+        warnings.append(
+            f"⚠️ 旁白总时长 ({total_narration:.1f}s) + 间隔 ({total_gap:.1f}s) = {required_duration:.1f}s，"
+            f"超过视频时长 ({video_duration:.1f}s)，将压缩间隔并可能跳过部分段落"
+        )
+
+    for i, seg in enumerate(segments_info):
+        duration = seg["duration"]
+        shot_start = seg.get("shot_start", 0)
+        seg_id = seg.get("segment_id", f"segment_{i+1}")
+
+        # 检查剩余空间是否足够
+        min_start = max(current_time, shot_start)
+        min_end = min_start + duration
+
+        if min_end > video_duration:
+            # 空间不足，跳过这段
+            warnings.append(f"⚠️ {seg_id}: 空间不足，已跳过（需要 {duration:.1f}s，剩余 {video_duration - current_time:.1f}s）")
+            time_points.append({"start_time": 0, "end_time": 0, "skipped": True})
+            continue
+
+        # 计算剩余可用时间和剩余段落数
+        remaining_segments = len([s for s in segments_info[i:] if s.get("duration", 0) > 0])
+        remaining_narration = sum(s["duration"] for s in segments_info[i:])
+        remaining_gap = gap * (remaining_segments - 1) if remaining_segments > 1 else 0
+        remaining_required = remaining_narration + remaining_gap
+        remaining_available = video_duration - current_time
+
+        # 如果剩余空间紧张，动态调整间隔
+        effective_gap = gap
+        if remaining_required > remaining_available and remaining_segments > 1:
+            # 计算需要的最小间隔
+            needed_gap = (remaining_available - remaining_narration) / (remaining_segments - 1)
+            effective_gap = max(0, needed_gap)  # 可以压缩到 0
+
+        # 起始时间
+        start_time = max(current_time + effective_gap, shot_start)
+        end_time = start_time + duration
+
+        # 最终检查
+        if end_time > video_duration:
+            end_time = video_duration
+            warnings.append(f"⚠️ {seg_id}: 截断到视频末尾")
+
+        time_points.append({"start_time": start_time, "end_time": end_time, "skipped": False})
+        current_time = end_time  # 更新为当前段的结束时间
+
+    return time_points, warnings
+
+
+async def smart_narration_mix(
+    video_path: str,
+    narration_dir: str,
+    storyboard_path: str,
+    output: str,
+    bgm_path: str = None,
+    bgm_volume: float = 0.15,
+    narration_volume: float = 1.5,
+    gap: float = 0.5
+) -> Dict[str, Any]:
+    """
+    智能旁白合成：
+    1. 读取所有旁白音频及其精确时长（ffprobe）
+    2. 按 target_shot 定位镜头起始时间
+    3. 计算不重叠的时间点，预留间隔
+    4. 合成最终音频
+
+    Args:
+        video_path: 视频文件路径
+        narration_dir: 旁白音频目录
+        storyboard_path: storyboard.json 路径
+        output: 输出视频路径
+        bgm_path: 背景音乐路径（可选）
+        bgm_volume: BGM 音量（默认 0.15）
+        narration_volume: 旁白音量（默认 1.5）
+        gap: 段与段之间的间隔（秒，默认 0.5）
+
+    Returns:
+        {"success": True, "output": output, "segments_info": [...]}
+    """
+    if not os.path.exists(video_path):
+        return {"success": False, "error": f"视频不存在: {video_path}"}
+
+    if not os.path.exists(storyboard_path):
+        return {"success": False, "error": f"storyboard.json 不存在: {storyboard_path}"}
+
+    # 读取 storyboard
+    with open(storyboard_path, 'r', encoding='utf-8') as f:
+        storyboard = json.load(f)
+
+    segments = storyboard.get("narration_segments", [])
+    if not segments:
+        logger.info("ℹ️ 无旁白段落，直接复制视频")
+        import shutil
+        shutil.copy(video_path, output)
+        return {"success": True, "output": output, "skipped": True}
+
+    # 获取视频时长
+    video_duration = await get_video_duration(video_path)
+
+    # 获取每个镜头的起始时间
+    shot_times = calculate_shot_times(storyboard)
+
+    # 收集每段旁白的精确时长
+    segments_info = []
+    for seg in segments:
+        seg_id = seg.get("segment_id", "")
+
+        # 查找音频文件
+        audio_file = None
+        possible_paths = [
+            os.path.join(narration_dir, f"{seg_id}.mp3"),
+            os.path.join(narration_dir, f"narr_{seg_id}.mp3"),
+            os.path.join(narration_dir, f"narration_{seg_id}.mp3"),
+        ]
+        for p in possible_paths:
+            if os.path.exists(p):
+                audio_file = p
+                break
+
+        if not audio_file:
+            logger.warning(f"⚠️ 未找到旁白音频: {seg_id}")
+            continue
+
+        # 获取精确时长
+        duration = get_audio_duration_sync(audio_file)
+
+        # 获取对应的镜头起始时间
+        target_shot = seg.get("target_shot", "")
+        shot_start = shot_times.get(target_shot, 0)
+
+        segments_info.append({
+            "segment_id": seg_id,
+            "audio_path": audio_file,
+            "duration": duration,
+            "shot_start": shot_start,
+            "target_shot": target_shot,
+            "text": seg.get("text", "")[:30] + "..."
+        })
+
+    if not segments_info:
+        logger.warning("⚠️ 没有有效的旁白音频")
+        import shutil
+        shutil.copy(video_path, output)
+        return {"success": True, "output": output, "warning": "没有有效旁白"}
+
+    # 计算不重叠的时间点
+    time_points, warnings = calculate_narration_times(segments_info, video_duration, gap)
+
+    # 打印警告
+    for w in warnings:
+        logger.warning(w)
+
+    # 更新 segments_info，过滤掉 skipped 的段落
+    active_segments = []
+    for i, tp in enumerate(time_points):
+        segments_info[i]["start_time"] = tp["start_time"]
+        segments_info[i]["end_time"] = tp["end_time"]
+        segments_info[i]["skipped"] = tp.get("skipped", False)
+
+        if tp.get("skipped"):
+            logger.warning(f"  ⏭️ {segments_info[i]['segment_id']}: 已跳过")
+        else:
+            logger.info(f"  📝 {segments_info[i]['segment_id']}: {tp['start_time']:.1f}s - {tp['end_time']:.1f}s ({segments_info[i]['duration']:.1f}s)")
+            active_segments.append(segments_info[i])
+
+    # 构建 FFmpeg 命令
+    Path(output).parent.mkdir(parents=True, exist_ok=True)
+
+    # 如果没有活跃段落，直接复制视频
+    if not active_segments:
+        logger.warning("⚠️ 没有可用的旁白段落，直接复制视频")
+        import shutil
+        shutil.copy(video_path, output)
+        return {
+            "success": True,
+            "output": output,
+            "warning": "所有旁白段落被跳过",
+            "segments_info": segments_info
+        }
+
+    cmd = ["ffmpeg", "-y"]
+    filter_parts = []
+    input_idx = 1
+
+    # 添加视频输入
+    cmd.extend(["-i", video_path])
+
+    # 添加旁白输入并构建 filter（只用 active_segments）
+    mix_inputs = ["[0:a]"]
+
+    for seg in active_segments:
+        cmd.extend(["-i", seg["audio_path"]])
+        delay_ms = int(seg["start_time"] * 1000)
+        filter_parts.append(
+            f"[{input_idx}:a]adelay={delay_ms}|{delay_ms},volume={narration_volume}[n{input_idx}]"
+        )
+        mix_inputs.append(f"[n{input_idx}]")
+        input_idx += 1
+
+    # 添加 BGM（如果有）
+    if bgm_path and os.path.exists(bgm_path):
+        cmd.extend(["-i", bgm_path])
+        filter_parts.append(f"[{input_idx}:a]volume={bgm_volume}[bgm]")
+        mix_inputs.append("[bgm]")
+
+    # amix 混音 - 注意：输入之间不需要逗号，直接拼接
+    filter_parts.append(
+        f"{''.join(mix_inputs)}amix=inputs={len(mix_inputs)}:duration=first:normalize=0[aout]"
+    )
+
+    cmd.extend([
+        "-filter_complex", ";".join(filter_parts),
+        "-map", "0:v",
+        "-map", "[aout]",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-shortest",
+        output
+    ])
+
+    success, msg = await run_ffmpeg(cmd)
+
+    if success:
+        logger.info(f"✅ 智能旁白合成完成: {output}")
+        return {
+            "success": True,
+            "output": output,
+            "segments_count": len(active_segments),
+            "total_segments": len(segments_info),
+            "segments_info": segments_info,
+            "warnings": warnings if warnings else None
+        }
+    else:
+        return {"success": False, "error": msg}
+
+
 # ============== 命令行入口 ==============
 
 async def cmd_concat(args):
@@ -1053,6 +1350,22 @@ async def cmd_narration(args):
     return 0 if result.get("success") else 1
 
 
+async def cmd_smart_narration(args):
+    """智能旁白合成命令"""
+    result = await smart_narration_mix(
+        video_path=args.video,
+        narration_dir=args.narration_dir,
+        storyboard_path=args.storyboard,
+        output=args.output,
+        bgm_path=args.bgm,
+        bgm_volume=args.bgm_volume,
+        narration_volume=args.narration_volume,
+        gap=args.gap
+    )
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0 if result.get("success") else 1
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Vico Editor - FFmpeg 视频剪辑命令行工具",
@@ -1130,6 +1443,17 @@ def main():
     narration_parser.add_argument("--narration-volume", type=float, default=1.0, help="旁白音量")
     narration_parser.add_argument("--video-volume", type=float, default=1.0, help="原视频音量")
 
+    # smart-narration 子命令（智能旁白合成）
+    smart_narration_parser = subparsers.add_parser("smart-narration", help="智能旁白合成（自动计算时间点，避免重叠）")
+    smart_narration_parser.add_argument("--video", "-v", required=True, help="输入视频")
+    smart_narration_parser.add_argument("--output", "-o", required=True, help="输出视频路径")
+    smart_narration_parser.add_argument("--storyboard", "-s", required=True, help="storyboard.json 路径")
+    smart_narration_parser.add_argument("--narration-dir", "-n", required=True, help="旁白音频目录")
+    smart_narration_parser.add_argument("--bgm", "-b", help="背景音乐路径（可选）")
+    smart_narration_parser.add_argument("--bgm-volume", type=float, default=0.15, help="BGM 音量（默认 0.15）")
+    smart_narration_parser.add_argument("--narration-volume", type=float, default=1.5, help="旁白音量（默认 1.5）")
+    smart_narration_parser.add_argument("--gap", type=float, default=0.5, help="旁白间隔秒数（默认 0.5）")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -1147,6 +1471,7 @@ def main():
         "trim": cmd_trim,
         "image": cmd_image,
         "narration": cmd_narration,
+        "smart-narration": cmd_smart_narration,
     }
 
     return asyncio.run(commands[args.command](args))
