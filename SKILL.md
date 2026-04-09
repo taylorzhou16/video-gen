@@ -58,8 +58,8 @@ python video_gen_tools.py video --provider fal --backend kling-omni --image-list
 | **广告片（无真实素材）** | **Seedance** | Kling-Omni | 长镜头 + 智能切镜 |
 | **广告片（有真实素材）** | Kling-3.0 | — | 首帧精确控制，真实素材 |
 | **MV短片** | **Seedance** | Kling-Omni | 长镜头 + 音乐驱动 |
-| **Vlog/写实类** | Kling-3.0 | — | 首帧精确控制，不走 Seedance |
-| **高质量写实短片** | **Veo3** | Kling-3.0 | Google Veo3 画质最佳，4/6/8s 短片 |
+| **Vlog/写实类** | Kling-3.0 | Veo3 | 首帧精确控制，不走 Seedance |
+| **高质量写实短片** | Kling-3.0 | Veo3 | Veo3仅作兜底，4/6/8s 短片 |
 
 **visual_style 只影响用户照片处理方式（如有用户照片）**：
 
@@ -499,8 +499,8 @@ storyboard["character_image_mapping"] = image_mapping
 | **广告片（无真实素材）** | **Seedance** | Kling-Omni | 长镜头 + 智能切镜 |
 | **广告片（有真实素材）** | Kling-3.0 | — | 首帧精确控制，真实素材 |
 | **MV短片** | **Seedance** | Kling-Omni | 长镜头 + 音乐驱动 |
-| **Vlog/写实类** | Kling-3.0 | — | 首帧精确控制，不走 Seedance |
-| **高质量写实短片** | **Veo3** | Kling-3.0 | Google Veo3 画质最佳，4/6/8s 短片 |
+| **Vlog/写实类** | Kling-3.0 | Veo3 | 首帧精确控制，不走 Seedance |
+| **高质量写实短片** | Kling-3.0 | Veo3 | Veo3仅作兜底，4/6/8s 短片 |
 
 **首帧控制能力对比**：
 

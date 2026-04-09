@@ -144,7 +144,7 @@ python video_gen_tools.py image --prompt "<描述>" --style cinematic --output i
 | **广告片（有真实素材）** | Kling-3.0 | — | 首帧精确控制 |
 | **MV短片** | **Seedance 2** | Kling-Omni | 长镜头 + 音乐驱动 |
 | **Vlog/写实类** | Kling-3.0 | Veo3 | 首帧精确控制 |
-| **高质量写实短片** | **Veo3** | Kling-3.0 | 画质最佳 |
+| **高质量写实短片** | Kling-3.0 | Veo3 | Veo3仅作兜底，4/6/8s |
 
 ### video_gen_editor.py
 
