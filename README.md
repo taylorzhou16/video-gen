@@ -10,9 +10,9 @@
 
 | # | 视频名称 | 类型 | 下载 |
 |---|---------|------|------|
-| 1 | 迪士尼照片集 Vlog | Vlog | [demo1_disney_vlog.mp4](https://github.com/taylorzhou16/video-gen/releases/download/v1.0.0-demo/demo1_disney_vlog.mp4) |
+| 1 | Merry Christmas Mr Lawrence | 音乐短片 | [demo3_merry_christmas.mp4](https://github.com/taylorzhou16/video-gen/releases/download/v1.0.0-demo/demo3_merry_christmas.mp4) |
 | 2 | 咖啡 & 抱石周末 | Vlog | [demo2_coffee_bouldering.mp4](https://github.com/taylorzhou16/video-gen/releases/download/v1.0.0-demo/demo2_coffee_bouldering.mp4) |
-| 3 | Merry Christmas Mr Lawrence | 音乐短片 | [demo3_merry_christmas.mp4](https://github.com/taylorzhou16/video-gen/releases/download/v1.0.0-demo/demo3_merry_christmas.mp4) |
+| 3 | 迪士尼照片集 Vlog | Vlog | [demo1_disney_vlog.mp4](https://github.com/taylorzhou16/video-gen/releases/download/v1.0.0-demo/demo1_disney_vlog.mp4) |
 | 4 | F1 上海站 — 与维斯塔潘同场竞技 | 赛事模拟 | [demo4_f1_shanghai.mp4](https://github.com/taylorzhou16/video-gen/releases/download/v1.0.0-demo/demo4_f1_shanghai.mp4) |
 | 5 | 乐于助人小故事 | 虚构短剧 | [demo5_helpful_story.mp4](https://github.com/taylorzhou16/video-gen/releases/download/v1.0.0-demo/demo5_helpful_story.mp4) |
 | 6 | 牛奶风波之断我口粮 | 虚构短剧 | [demo6_milk_incident.mp4](https://github.com/taylorzhou16/video-gen/releases/download/v1.0.0-demo/demo6_milk_incident.mp4) |
