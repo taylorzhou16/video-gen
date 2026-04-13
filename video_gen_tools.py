@@ -377,6 +377,27 @@ def validate_storyboard(storyboard_path: str) -> Dict[str, Any]:
                 if char_id and char_id not in known_element_ids:
                     warnings.append(f"[{shot_id}] 引用了未注册角色: {char_id}")
 
+            # --- 链路一致性校验：Kling-Omni shot-level 结构 ---
+            if backend == "kling-omni" and mode in ("omni-video", "reference2video"):
+                # 必须有 image_prompt（用于生成分镜图）
+                if not shot.get("image_prompt"):
+                    errors.append(f"[{shot_id}] Kling-Omni 必须有 image_prompt（shot-level 分镜结构）")
+
+                # 必须有 frame_path（分镜图输出路径）
+                if not shot.get("frame_path"):
+                    errors.append(f"[{shot_id}] Kling-Omni 必须有 frame_path（shot-level 分镜图）")
+
+                # 检查是否误用 Seedance scene 分镜图
+                ref_images = shot.get("reference_images", [])
+                if ref_images:
+                    first_ref = ref_images[0]
+                    # 如果路径是 scene_x_frame 而非 shot_x_frame，说明是 Seedance 结构
+                    if "_frame" in first_ref and "shot_" not in first_ref and "scene_" in first_ref:
+                        warnings.append(
+                            f"[{shot_id}] 可能使用 Seedance scene 分镜图 '{first_ref}'，"
+                            f"Kling-Omni 需要 shot-level 分镜图（如 {shot_id}_frame.png）"
+                        )
+
         # --- Seedance scene 总时长校验 ---
         if seedance_shots:
             scene_total_duration = sum(s.get("duration", 0) for s in seedance_shots)

@@ -59,42 +59,40 @@
 
 ## 真人素材检测（顶层过滤）
 
-**重要限制**：Seedance（fal 和 piapi provider）无法处理含有真人图像的视频生成请求，会触发 `content_policy_violation` 错误。
-
-因此在后端选择之前，必须先检测是否涉及真人素材。
+**保守策略**：当 visual_style = realistic 且有角色参考图时，禁用 Seedance 后端，强制降级到 Kling-Omni。
 
 ### 检测条件
 
 在 **Phase 2 创意设计阶段** 检测以下条件：
 
-| 条件 | 检测方式 | 说明 |
-|------|---------|------|
-| `visual_style = realistic` | 读取 `creative.json` | 用户选择了真人写实风格 |
-| 有真人参考图 | 检查 `materials/personas/` 目录 | 用户上传的真人照片或 AI 生成的真人风格参考图 |
-| 视频需要人物出场 | 分镜设计中镜头包含角色 | 视频生成需要参考人物外貌 |
+| visual_style | 有角色参考图 | Seedance |
+|--------------|------------|----------|
+| **realistic** | 有（无论来源） | **禁用** |
+| realistic | 无 | 可用 |
+| **anime** | 有 | 可用 |
+| anime | 无 | 可用 |
 
-**真人素材定义**：
-- 用户上传的真实人物照片（自拍、肖像照等）
+**真人参考图定义**：
+- 用户上传的人物照片（自拍、肖像照等）
 - AI 生成的真人风格参考图（`visual_style = realistic` 时生成）
 - **不包含**：动漫风格参考图、无人物的场景图
 
 ### 禁用 Seedance 规则
 
-**当检测到真人素材时，禁止使用 Seedance 后端，强制降级到 Kling-Omni。**
+**采用保守策略规避审核不确定性**：
 
 ```
 检测流程（Phase 2）：
 读取 creative.json → visual_style = realistic?
                 ↓ 是
-检查 materials/personas/ → 是否有真人参考图?
+有角色参考图（用户上传 或 AI生成）？
                 ↓ 是
 禁用 Seedance → 强制使用 Kling-Omni
 ```
 
-**原因**：
-- fal provider：触发 `content_policy_violation: likenesses of real people`
-- piapi provider：同样有真人肖像审核限制
-- Kling-Omni：无此限制，可正常处理真人参考图
+**策略说明**：
+- Seedance 审核行为不稳定，为保险起见统一禁用
+- Kling-Omni 无真人审核限制，可正常处理真人参考图
 
 ### 后端选择优先级调整
 
@@ -104,13 +102,25 @@
 | 无真人素材（动漫风格） | Seedance（优先）> Kling-Omni |
 | 无人物参考图 | Seedance（优先）> Kling-Omni |
 
-**落地到 storyboard.json**：
+**落地到 creative.json（Phase 2）**：
+
+```json
+{
+  "visual_style": "realistic",
+  "backend_selection": {
+    "seedance_disabled": true,
+    "preferred_backend": "kling-omni",
+    "reason": "真人参考图会触发 Seedance content_policy_violation"
+  }
+}
+```
+
+**Phase 3 读取此字段后**，storyboard.json 的 scene 自动设置为：
 
 ```json
 {
   "scene_id": "scene_1",
-  "generation_backend": "kling-omni",  // 有真人素材时强制
-  "backend_selection_reason": "真人参考图禁用 Seedance",
+  "generation_backend": "kling-omni",
   "shots": [...]
 }
 ```

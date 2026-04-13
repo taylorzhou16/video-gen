@@ -83,6 +83,7 @@
 - `generation_backend`：后端选择，可选：kling / kling-omni / vidu / seedance
 - `video_prompt`：视频生成提示词
 - `image_prompt`：图片生成提示词（img2video/omni-video 时使用）
+- `frame_path`：分镜图输出路径（Kling-Omni shot-level 必需），如 `generated/frames/{shot_id}_frame.png`
 - `frame_strategy`：首尾帧策略，可选：none / first_frame_only / first_and_last_frame
   - **注意**：Omni 模式（`generation_mode: omni-video`）不使用此字段，因为 Omni 使用 `reference_images` 而非首帧控制
 - `reference_images`：参考图路径列表（omni-video 必需，img2video 可选）

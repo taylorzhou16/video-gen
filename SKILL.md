@@ -393,6 +393,58 @@ manager.update_reference_image(persona_id, "materials/personas/{name}_ref.png")
 - **可用 text2video**：单一场景出现、纯风景、用户明确接受外貌波动
 - **AI 生成参考图时必须遵循 visual_style**：anime 风格或 realistic 风格
 
+---
+
+### Phase 2 结束检查点：真人素材检测
+
+**时机**：所有创意问题（问题 1-7）完成后，Phase 2 产出之前
+
+**检测逻辑**：
+
+**核心规则（无需检查图片内容）**：
+
+| visual_style | 有角色参考图 | Seedance |
+|--------------|------------|----------|
+| **realistic** | 有（无论来源：用户上传 或 AI生成） | **禁用** |
+| realistic | 无 | 可用 |
+| **anime** | 有 | 可用 |
+| anime | 无 | 可用 |
+
+**推理链条**：
+```
+visual_style = realistic？
+    ↓ 是
+有角色参考图（用户上传 或 Phase 2 AI生成）？
+    ↓ 是
+→ 禁用 Seedance，使用 Kling-Omni
+```
+
+**关键认知**：
+- **采用保守策略**：visual_style = realistic + 有角色参考图 → 禁用 Seedance
+- **规避审核不确定性**：Seedance 审核行为不稳定（实际测试表明真实照片可能通过，但为保险起见统一禁用）
+- 不需要事后检查图片内容，只需事前推理 visual_style + 是否有角色参考图
+
+**检测结果写入 creative.json**：
+
+```json
+{
+  "visual_style": "realistic",
+  "backend_selection": {
+    "seedance_disabled": true,
+    "preferred_backend": "kling-omni",
+    "reason": "真人参考图会触发 Seedance content_policy_violation"
+  }
+}
+```
+
+**告知用户**：
+> ⚠️ 检测到真人风格素材。Seedance 后端会触发内容审核限制。
+> 已记录：后续不能走 Seedance 链路，Phase 3 将使用 Kling-Omni（需按 shot-level 设计分镜）。
+
+**Phase 3 读取此字段**：若 `backend_selection.seedance_disabled = true`，自动按 Kling-Omni shot-level 设计分镜。
+
+---
+
 ### Phase 2 产出
 
 - `creative/creative.json` — 创意方案（含 visual_style 画风决策）
@@ -408,6 +460,11 @@ manager.update_reference_image(persona_id, "materials/personas/{name}_ref.png")
   "duration": 30,
   "aspect_ratio": "16:9",
   "visual_style": "anime",  // realistic / anime / mixed — 画风决策
+  "backend_selection": {
+    "seedance_disabled": false,
+    "preferred_backend": "seedance",
+    "reason": "动漫风格，无真人素材限制"
+  },
   "music": {
     "enabled": true,
     "source": "ai_generated",
@@ -418,6 +475,19 @@ manager.update_reference_image(persona_id, "materials/personas/{name}_ref.png")
     "type": "ai_generated",
     "voice_style": "温柔女声，语速适中",
     "user_text": null
+  }
+}
+```
+
+**visual_style = realistic 时的 backend_selection**：
+
+```json
+{
+  "visual_style": "realistic",
+  "backend_selection": {
+    "seedance_disabled": true,
+    "preferred_backend": "kling-omni",
+    "reason": "真人参考图会触发 Seedance content_policy_violation"
   }
 }
 ```
@@ -494,28 +564,15 @@ storyboard["character_image_mapping"] = image_mapping
 
 ### Step 2: 自动后端选择逻辑
 
-**顶层过滤：真人素材检测**
+**读取 Phase 2 真人检测结果**：
 
-Seedance（fal 和 piapi）无法处理含有真人图像的视频生成请求，会触发 `content_policy_violation`。
-
-**检测条件**：
-- `visual_style = realistic`（真人写实风格）
-- `materials/personas/` 目录有真人参考图（用户上传或 AI 生成的真人风格图）
-
-**禁用规则**：检测到真人素材 → 禁用 Seedance → 强制使用 Kling-Omni
-
-**检测流程**（在创意设计阶段执行）：
-```
-读取 creative.json → visual_style = realistic?
-                ↓ 是
-检查 materials/personas/ → 是否有真人参考图?
-                ↓ 是
-禁用 Seedance → 强制使用 Kling-Omni → 写入 storyboard.json
-```
+首先读取 `creative.json` 的 `backend_selection` 字段：
+- 若 `seedance_disabled = true` → 强制使用 Kling-Omni，跳过场景分析
+- 若无此字段 → 按场景需求选择后端
 
 ---
 
-**场景驱动选择**（真人素材检测后）：
+**场景驱动选择**：
 
 | 场景 | 真人素材 | 优先后端 | 兜底后端 | 原因 |
 |-----|---------|---------|---------|------|
@@ -664,6 +721,64 @@ python video_gen_tools.py validate --storyboard storyboard/storyboard.json
 **2. 参数校验**
 - **从 storyboard.json 读取 `aspect_ratio` 字段，传递给 CLI 的 `--aspect-ratio` 参数**
 - 根据 storyboard 的 `audio` 配置设置 API 参数（详见 prompt-guide.md）
+
+---
+
+### Phase 4 启动前检查：Storyboard 链路一致性
+
+**时机**：每次启动第一个视频生成任务之前
+
+**检测逻辑**：检查 storyboard 是否按当前选择的模型链路撰写
+
+| 后端 | 必须满足的条件 | 错误提示 |
+|------|--------------|---------|
+| **Seedance** | scene-level 分镜图（scene_1_frame.png），无 shot-level 分镜 | 无特殊要求 |
+| **Kling-Omni** | **每个 shot 有 image_prompt 和 frame_path** | 缺少 shot-level 分镜结构 |
+| **Kling img2video** | 每个 shot 有 frame_path，frame_strategy = first_frame_only | 缺少首帧图 |
+| **Veo3** | 无特殊分镜要求 | 无 |
+
+**Kling-Omni 链路一致性检查**：
+
+```python
+# 检查每个 shot 是否有 shot-level 分镜结构
+for shot in shots:
+    if backend == "kling-omni":
+        # 必须有 image_prompt（用于生成分镜图）
+        if not shot.get("image_prompt"):
+            errors.append(f"[{shot_id}] Kling-Omni 必须有 image_prompt")
+        
+        # 必须有 frame_path（分镜图输出路径）
+        if not shot.get("frame_path"):
+            errors.append(f"[{shot_id}] Kling-Omni 必须有 frame_path")
+        
+        # 检查是否误用 Seedance scene 分镜图
+        ref_images = shot.get("reference_images", [])
+        if ref_images and "_frame" in ref_images[0]:
+            if "shot_" not in ref_images[0]:
+                warnings.append(f"[{shot_id}] 可能使用 Seedance scene 分镜图，需 shot-level")
+```
+
+**检测不通过 → 回退 Phase 3 改写 storyboard**：
+
+```
+检查 storyboard → backend = kling-omni 但无 shot-level 分镜结构?
+  ↓ 是（有 ERROR）
+告知用户 → 回退 Phase 3：
+  ⚠️ Storyboard 结构与 Kling-Omni 链路不一致。
+  缺少 shot-level 分镜图（image_prompt、frame_path）。
+  需要回退 Phase 3 按 shot-level 改写 storyboard。
+  ↓
+回退 Phase 3 → 改写 storyboard：
+  1. 为每个 shot 设计 image_prompt
+  2. 为每个 shot 指定 frame_path
+  3. 生成 shot-level 分镜图
+  ↓
+重新检查 storyboard → 通过 → 启动视频生成
+```
+
+**重要**：此检查在 validate_storyboard 之后执行，validate 通过不代表链路结构正确。
+
+---
 
 ### 执行规则
 
