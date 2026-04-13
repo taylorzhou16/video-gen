@@ -101,6 +101,38 @@
 }
 ```
 
+### 执行方式差异（重要）
+
+**Seedance vs Kling-Omni 执行方式完全不同**：
+
+| 后端 | 分镜图级别 | 执行方式 | 输出 |
+|------|----------|---------|------|
+| **Seedance** | scene-level（一张覆盖多 shots） | 一次 API 调用生成整个 scene | 1 个视频 |
+| **Kling-Omni** | **shot-level（每个 shot 一张）** | **逐 shot 调用 API** | N 个视频片段 |
+
+**真人素材强制 Kling-Omni 时，必须按 shot-level 执行**：
+
+```
+执行流程（Phase 4）：
+1. 为每个 shot 生成分镜图（Gemini + image_prompt + 角色参考图）
+   - 生成路径：generated/frames/{shot_id}_frame.png
+   - 每个 shot 独立的分镜图（不是 scene 共享）
+
+2. 逐 shot 调用 Kling-Omni API：
+   python video_gen_tools.py video \
+     --backend kling-omni \
+     --image-list generated/frames/{shot_id}_frame.png {角色参考图} \
+     --prompt "Referencing {shot_id}_frame composition..."
+
+3. 输出 N 个视频片段（需要后续拼接）
+```
+
+**禁止的行为**：
+- ❌ 按 scene 调用 API（Kling-Omni 不支持 scene-level）
+- ❌ 使用 Seedance 的 scene 分镜图（需重新生成 shot-level 分镜图）
+
+详见「Seedance → Kling-Omni 降级流程」章节。
+
 ---
 
 ## 后端选择决策树
