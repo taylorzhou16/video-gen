@@ -28,7 +28,7 @@
 | **音画同出** | `--audio` | `--audio` | **✓ 默认生成音频** | **✓ 默认生成音频** |
 | **最高分辨率** | 1080p | 1080p | **720p** ⚠️ | **720p** |
 | **宽高比** | 16:9/9:16/1:1 | 16:9/9:16/1:1 | **16:9/9:16/4:3/3:4/1:1/21:9/auto** | 16:9/9:16 |
-| **最佳场景** | 首帧精确控制、场景一致 | 角色一致性、多人物 | **虚构片/短剧、智能切镜、MV** | **高质量写实短片** |
+| **最佳场景** | 首帧精确控制、场景一致 | 角色一致性、多人物 | **虚构片/短剧、智能切镜、MV** | **全局兜底** |
 
 **重要区别**：
 - Kling `--image` 是**首帧图**（视频从此图开始）
@@ -51,8 +51,8 @@
 | **广告片（有真实素材）** | Kling-3.0 | — | 首帧精确控制，真实素材 |
 | **MV短片** | **Seedance** | Kling-Omni | 长镜头 + 音乐驱动 |
 | **Vlog/写实类** | Kling-3.0 | Veo3 | 首帧精确控制，不走 Seedance |
-| **高质量写实短片** | Kling-3.0 | Veo3 | Veo3仅作兜底，4/6/8s |
-| **超短镜头（≤ 4s）** | Kling | Veo3 | Kling最短3s，Veo3最短4s作兜底 |
+
+**Veo3 作为全局最兜底的视频生成模型**：除非用户主动要求使用 Veo3，否则不主动调用 Veo3。Veo3 时长固定（4/6/8s）、分辨率最高 720p，仅在所有其他后端失败时作为最终备选。
 
 **首帧控制能力对比**：
 
@@ -78,7 +78,6 @@
 | **MV短片** | **Seedance** | 时间分段 prompt + 分镜图 |
 | **Vlog/写实类** | Kling-3.0 | `--image first_frame.png` |
 | 需要首尾帧动画 | Kling | `--image first.png --tail-image last.png` |
-| 高质量写实短片 | **Veo3** | `--backend veo3 --duration 8` |
 | 简单无人场景 / 快速原型 | Kling（默认）或 vidu | 无需特殊参数 |
 
 ---
@@ -192,7 +191,6 @@ python video_gen_tools.py video \
 | **广告片（有真实素材）** | Kling-3.0 / Vidu | — | 首帧精确控制，真实素材 |
 | **MV短片** | **Seedance 2** | Kling-Omni | 长镜头 + 音乐驱动 |
 | **Vlog/写实类** | Kling-3.0 | Vidu | 首帧精确控制，不走 Seedance |
-| **超短镜头（≤ 4s）** | **Veo3** | Kling | Veo3 最短 4s，Kling 最短 3s |
 
 ---
 
@@ -436,23 +434,71 @@ C. 取消本次生成
 请选择：
 ```
 
-**Step 2：用户选择 A 后，修改 storyboard.json**
+**Step 2：用户选择 A 后，重新走 Kling-Omni 流程**
 
+**关键认知**：Seedance 分镜图是 **scene-level**（一张覆盖多 shots），而 Kling-Omni 需要按 **shot-level** 执行。降级不是简单的字段迁移，而是需要重新走完整的 Omni 流程。
+
+**处理方式**：
+1. **保留 storyboard 的创意设计**（风格、时长、角色、aspect_ratio 等）
+2. **按 Kling-Omni 的 shot-level 标准重新规划分镜**：
+   - 为每个 shot 设计 `image_prompt`（分镜图生成 prompt）
+   - 为每个 shot 指定 `frame_path`（`generated/frames/{shot_id}_frame.png`）
+   - 每个 shot 的 `video_prompt` 引用各自的分镜图
+3. **走完整的 Omni 执行流程**：
+   - 先为每个 shot 生成分镜图（Gemini 图片生成）
+   - 再逐 shot 调用 Kling-Omni API
+
+**Schema 变化示意**：
 ```json
-// 原始（Seedance）
+// 原始（Seedance - scene-level）
 {
-  "generation_mode": "seedance-video",
-  "generation_backend": "seedance",
-  "reference_images": ["分镜图", "角色参考图1", "角色参考图2"]
+  "scene_id": "scene_1",
+  "shots": [
+    {
+      "generation_mode": "seedance-video",
+      "generation_backend": "seedance",
+      "reference_images": ["generated/frames/scene_1_frame.png", "角色参考图"],
+      "seedance_merge_info": { "merged_shots": ["shot1", "shot2", "shot3"] }
+    },
+    { /* shot 2, shot 3 共享同一张分镜图 */ }
+  ]
 }
 
-// 降级后（Kling-Omni）
+// 降级后（Kling-Omni - shot-level）
+// 需要重新设计，参考 Omni 最佳实践（见"路径 A：Kling Omni"章节）
 {
-  "generation_mode": "omni-video",
-  "generation_backend": "kling-omni",
-  "reference_images": ["角色参考图1", "角色参考图2"]
+  "scene_id": "scene_1",
+  "shots": [
+    {
+      "generation_mode": "omni-video",
+      "generation_backend": "kling-omni",
+      "image_prompt": "Cinematic frame for shot 1...",  // 新增
+      "frame_path": "generated/frames/scene_1_shot_1_frame.png",  // 新增
+      "reference_images": ["generated/frames/scene_1_shot_1_frame.png", "角色参考图"],
+      "video_prompt": "Referencing scene_1_shot_1_frame composition..."  // 更新引用
+    },
+    {
+      "generation_mode": "omni-video",
+      "generation_backend": "kling-omni",
+      "image_prompt": "Cinematic frame for shot 2...",  // 新增
+      "frame_path": "generated/frames/scene_1_shot_2_frame.png",  // 新增
+      "reference_images": ["generated/frames/scene_1_shot_2_frame.png", "角色参考图"],
+      "video_prompt": "Referencing scene_1_shot_2_frame composition..."
+    }
+  ]
 }
 ```
+
+**执行步骤**：
+```
+1. 为每个 shot 生成分镜图（Gemini + image_prompt + 角色参考图）
+2. 逐 shot 调用 Kling-Omni API：
+   - --image-list {shot_frame} {角色参考图}
+   - --prompt "Referencing {shot_id}_frame composition..."
+3. 输出 N 个视频片段（而非 Seedance 的 1 个合并视频）
+```
+
+**参考**：Omni 最佳实践详见本文档「路径 A：Kling Omni」章节。
 
 **Step 3：执行 Kling-Omni**
 

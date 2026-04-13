@@ -4205,7 +4205,7 @@ async def cmd_setup(args):
             ]
         },
         "4": {
-            "name": "Veo3 via Compass（Google Veo3，高质量写实短片）",
+            "name": "Veo3 via Compass（Google Veo3，全局兜底模型）",
             "backend": "veo3",
             "provider": "compass",
             "keys": [
@@ -4442,7 +4442,7 @@ def main():
     video_parser.add_argument("--provider", choices=["official", "fal", "compass"], default=None,
                               help="API provider (默认自动选择; veo3 仅支持 compass)")
     video_parser.add_argument("--backend", "-b", choices=["kling", "kling-omni", "seedance", "veo3"], default="kling",
-                              help="视频生成后端 (默认 kling; kling-omni 用于参考图; seedance 用于智能切镜; veo3 用于高质量写实短片)")
+                              help="视频生成后端 (默认 kling; kling-omni 用于参考图; seedance 用于智能切镜; veo3 用于全局兜底)"))
     video_parser.add_argument("--mode", "-m", choices=["std", "pro", "text_to_video", "first_last_frames", "omni_reference"], default="std",
                               help="生成模式 (Kling: std 或 pro; Seedance: text_to_video, first_last_frames, omni_reference)")
     video_parser.add_argument("--multi-shot", action="store_true",

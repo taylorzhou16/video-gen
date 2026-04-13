@@ -51,7 +51,7 @@
   - **Seedance 2**（推荐虚构片）：4-15秒、智能切镜、多参考图、音画同出
   - **Kling v3**：3-15秒、首帧精确控制、画面质感好
   - **Kling v3 Omni**：3-15秒、多参考图、角色一致性最佳
-  - **Veo3**：4/6/8秒、高质量写实短片
+  - **Veo3**：4/6/8秒、全局兜底模型
 - ✅ **AI 音乐生成** - Suno V3.5 背景音乐
 - ✅ **TTS 语音合成** - Gemini TTS（多种音色、风格提示）
 - ✅ **AI 图片生成** - Gemini 3.1 Flash Image（compass/yunwu）
@@ -148,7 +148,7 @@ python video_gen_tools.py image --prompt "<描述>" --style cinematic --output i
 | **Seedance 2** | seedance-2 | 4-15s | 智能切镜、多参考图（最多9张）、首尾帧控制、音画同出 |
 | **Kling Omni** | kling-3.0-omni | 3-15s | 多参考图(reference2video)、角色一致性、音画同出 |
 | **Kling** | kling-3.0 | 3-15s | 首帧精确控制(img2video)、画面质感好 |
-| **Veo3** | veo-3.1-generate-001 | 4/6/8s | 高质量写实短片、首帧控制、默认音频 |
+| **Veo3** | veo-3.1-generate-001 | 4/6/8s | 全局兜底、首帧控制、默认音频 |
 
 **关键区别**：
 - **Seedance 2 / Kling Omni** 支持多参考图（角色一致性），Seedance 2 还支持首尾帧控制
@@ -162,7 +162,8 @@ python video_gen_tools.py image --prompt "<描述>" --style cinematic --output i
 | **广告片（有真实素材）** | Kling-3.0 | — | 首帧精确控制 |
 | **MV短片** | **Seedance 2** | Kling-Omni | 长镜头 + 音乐驱动 |
 | **Vlog/写实类** | Kling-3.0 | Veo3 | 首帧精确控制 |
-| **高质量写实短片** | Kling-3.0 | Veo3 | Veo3仅作兜底，4/6/8s |
+
+**Veo3 说明**：作为全局最兜底的视频生成模型，除非用户主动要求使用 Veo3，否则不主动调用 Veo3。
 
 ### video_gen_editor.py
 
@@ -196,7 +197,7 @@ export SEEDANCE_API_KEY="your-seedance-api-key"
 export KLING_ACCESS_KEY="your-access-key"
 export KLING_SECRET_KEY="your-secret-key"
 
-# Veo3 API - Google Veo3 视频生成（高质量写实短片）
+# Veo3 API - Google Veo3 视频生成（全局兜底模型）
 export COMPASS_API_KEY="your-compass-api-key"
 
 # Suno 音乐生成

@@ -59,7 +59,8 @@ python video_gen_tools.py video --provider fal --backend kling-omni --image-list
 | **广告片（有真实素材）** | Kling-3.0 | — | 首帧精确控制，真实素材 |
 | **MV短片** | **Seedance** | Kling-Omni | 长镜头 + 音乐驱动 |
 | **Vlog/写实类** | Kling-3.0 | Veo3 | 首帧精确控制，不走 Seedance |
-| **高质量写实短片** | Kling-3.0 | Veo3 | Veo3仅作兜底，4/6/8s 短片 |
+
+**Veo3 作为全局最兜底的视频生成模型**：除非用户主动要求使用 Veo3，否则不主动调用 Veo3。Veo3 时长固定（4/6/8s）、分辨率最高 720p，仅在所有其他后端失败时作为最终备选。
 
 **visual_style 只影响用户照片处理方式（如有用户照片）**：
 
@@ -137,9 +138,9 @@ python video_gen_tools.py setup
 >
 > **3. Kling via fal.ai** — 绕过官方并发限制
 >    - 需要：fal.ai API Key（from fal.ai）
->
-> **4. Veo3 via Compass** — Google Veo3，高质量写实短片（4/6/8s）
+> **4. Veo3 via Compass** — Google Veo3，全局兜底模型（4/6/8s）
 >    - 需要：Compass API Key（from compass.llm.shopee.io）
+>    - 说明：仅在所有其他后端失败时使用，或用户主动要求
 
 用户选择后，要求提供对应的 API key，然后保存：
 
@@ -500,7 +501,6 @@ storyboard["character_image_mapping"] = image_mapping
 | **广告片（有真实素材）** | Kling-3.0 | — | 首帧精确控制，真实素材 |
 | **MV短片** | **Seedance** | Kling-Omni | 长镜头 + 音乐驱动 |
 | **Vlog/写实类** | Kling-3.0 | Veo3 | 首帧精确控制，不走 Seedance |
-| **高质量写实短片** | Kling-3.0 | Veo3 | Veo3仅作兜底，4/6/8s 短片 |
 
 **首帧控制能力对比**：
 
@@ -674,9 +674,13 @@ API 失败 → 判断错误类型 →
 3. 用户选择 A → 执行降级流程
 
 **Seedance → Omni**：
-1. 告知用户降级后果（失去智能切镜，需手动 multi-shot）
-2. 修改 storyboard.json 的 generation_backend 为 `kling-omni`
-3. 每个 shot 单独调用 API（不合并）
+1. 告知用户降级后果（失去智能切镜，需重新按 shot-level 执行）
+2. **重新走完整的 Kling-Omni 流程**（不做复杂的字段迁移）：
+   - 保留 storyboard 的创意设计（风格、时长、角色等）
+   - 按 Omni shot-level 标准重新规划分镜：为每个 shot 设计 `image_prompt`、`frame_path`
+   - 先为每个 shot 生成分镜图（Gemini 图片生成）
+   - 再逐 shot 调用 Kling-Omni API
+3. 详见 [reference/backend-guide.md](reference/backend-guide.md) → "Seedance → Kling-Omni 降级流程"
 
 **Omni → Kling img2video**：
 1. 告知用户降级后果（角色一致性会降低）
@@ -693,7 +697,7 @@ API 失败 → 判断错误类型 →
 | generation_mode | CLI 参数 |
 |----------------|----------|
 | `seedance-video` | `--backend seedance --aspect-ratio {aspect_ratio} --image-list {frame} {ref1} {ref2} ...` |
-| `omni-video` | `--backend kling-omni --aspect-ratio {aspect_ratio} --image-list {ref1} {ref2} ...` |
+| `omni-video` | `--backend kling-omni --aspect-ratio {aspect_ratio} --image-list {frame} {ref1} {ref2} ...` |
 | `img2video` | `--aspect-ratio {aspect_ratio} --image {frame_path}` |
 | `text2video` | `--aspect-ratio {aspect_ratio}` |
 
@@ -713,12 +717,12 @@ python video_gen_tools.py video \
 
 **示例（Omni 模式）**：
 ```bash
-# 从 storyboard.json 读取 aspect_ratio（如 "16:9"）
+# Omni 最佳实践：分镜图 + 角色参考图
 python video_gen_tools.py video \
   --backend kling-omni \
   --aspect-ratio {aspect_ratio} \
-  --prompt "孙悟空挥舞金箍棒..." \
-  --image-list materials/personas/sunwukong_ref.png \
+  --prompt "Referencing scene1_shot1_frame composition. 孙悟空挥舞金箍棒，<<<image_1>>>..." \
+  --image-list generated/frames/scene1_shot1_frame.png materials/personas/sunwukong_ref.png \
   --audio \
   --output generated/videos/scene1_shot1.mp4
 ```
@@ -928,7 +932,7 @@ python video_gen_tools.py video \
   --duration 10 \
   --output output.mp4
 
-# Veo3 文生视频（Google Veo3，4/6/8s 高质量短片）
+# Veo3 文生视频（全局兜底，仅支持 4/6/8s）
 python video_gen_tools.py video \
   --backend veo3 \
   --prompt <描述> \
