@@ -67,10 +67,34 @@
 4. **风格**：cinematic / realistic / anime
 5. **比例**：竖屏9:16 / 横屏16:9 / 正方形1:1
 
-### 基础模板
+### 根据 visual_style 强制写风格关键词（重要）
+
+**必须在 image_prompt 开头强制写风格关键词，避免 Gemini 生成错误风格！**
+
+读取 `creative.json` 中的 `visual_style` 字段：
+
+| visual_style | 强制开头写法 | Style 行写法 |
+|--------------|-------------|-------------|
+| `realistic`（真人写实） | `**PHOTOREALISTIC real human start frame. NOT ANIME, NOT CARTOON, NOT ILLUSTRATION.**` | `Style: PHOTOREALISTIC, real human actress, actual skin texture, cinematic film grain, shallow depth of field` |
+| `anime`（动漫） | `Anime style 2D animation start frame.` | `Style: Anime style, 2D animation, cel shading, vibrant colors` |
+| `mixed`（混合） | 按场景区分，真人场景用 realistic 写法，动漫场景用 anime 写法 | 同上 |
+
+**错误示例（会导致动画风格）**：
+```
+❌ Cinematic realistic start frame.
+❌ Style: cinematic realistic  ← Gemini 可能理解为"电影感动画"
+```
+
+**正确示例（真人写实）**：
+```
+✅ PHOTOREALISTIC real human start frame. NOT ANIME, NOT CARTOON.
+✅ Style: PHOTOREALISTIC, real human actress, actual skin texture, cinematic film grain
+```
+
+### 基础模板（visual_style = realistic）
 
 ```
-Cinematic realistic start frame.
+PHOTOREALISTIC real human start frame. NOT ANIME, NOT CARTOON, NOT ILLUSTRATION.
 
 Scene: {具体场景描述}
 Location details: {环境细节}
@@ -83,13 +107,32 @@ Lighting: {灯光描述}
 Color grade: {色调}
 Aspect ratio: {画面比例}
 
-Style: {cinematic realistic/film grain/etc.}
+Style: PHOTOREALISTIC, real human actress, actual skin texture, cinematic film grain, shallow depth of field
 ```
 
-### 完整示例
+### 基础模板（visual_style = anime）
 
 ```
-Cinematic realistic start frame.
+Anime style 2D animation start frame.
+
+Scene: {具体场景描述}
+Location details: {环境细节}
+
+{角色外貌详细描述}，{姿态}，{表情}，{位置}
+
+Shot scale: {wide/medium/close-up}
+Camera angle: {eye-level/high/low}
+Lighting: {灯光描述}
+Color grade: {色调}
+Aspect ratio: {画面比例}
+
+Style: Anime style, 2D animation, cel shading, vibrant colors
+```
+
+### 完整示例（realistic）
+
+```
+PHOTOREALISTIC real human start frame. NOT ANIME, NOT CARTOON, NOT ILLUSTRATION.
 
 Scene: A wide three-person shot inside the men's restroom at the doorway
 Location details: white tiles, sink and mirror visible, door frame as divider
@@ -102,7 +145,7 @@ Camera angle: Eye-level, frontal
 Lighting: Cold white fluorescent overhead lighting
 Color grade: Cool blue-white
 
-Style: Cinematic realistic, film grain, shallow depth of field, 16:9 aspect ratio
+Style: PHOTOREALISTIC, real human actress, actual skin texture, cinematic film grain, shallow depth of field, 16:9 aspect ratio
 ```
 
 ---
@@ -367,10 +410,10 @@ python video_gen_tools.py tts \
 
 ## 附录：模板速查
 
-### Image Prompt 模板（Omni分镜图）
+### Image Prompt 模板（Omni分镜图，realistic）
 
 ```
-Cinematic realistic start frame.
+PHOTOREALISTIC real human start frame. NOT ANIME, NOT CARTOON, NOT ILLUSTRATION.
 
 Referencing the facial features, face shape, skin tone, and clothing details of:
 - image_1: Element_{Name}, {外貌详细描述}
@@ -386,7 +429,7 @@ Lighting: {灯光描述}
 Color grade: {色调}
 Aspect ratio: {画面比例}
 
-Style: Cinematic realistic, film grain, shallow depth of field
+Style: PHOTOREALISTIC, real human actress, actual skin texture, cinematic film grain, shallow depth of field
 ```
 
 ### Video Prompt 模板（Omni视频）
