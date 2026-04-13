@@ -78,14 +78,55 @@ python ~/.claude/skills/video-gen/video_gen_tools.py vision <目录路径> --bat
 | 参数 | 说明 |
 |------|------|
 | `--backend seedance` | 使用 Seedance 2 后端 |
+| `--provider` | Provider 选择：`fal`（推荐）/ `piapi`（兜底），默认自动选择（fal > piapi） |
 | `--storyboard` + `--scene` | 自动组装模式：从 storyboard 读取 scene，自动计算时间分段、拼装 prompt、排列 image_urls、对齐 duration |
-| `--prompt` | 手动模式：直接指定时间分段 prompt（兜底用） |
-| `--image-list` | 手动模式：图片列表（分镜图在前，角色参考图在后） |
-| `--duration` | 时长：**4-15s（任意整数）** |
-| `--mode` | 生成模式：`text_to_video`（默认）/ `first_last_frames`（首尾帧）/ `omni_reference`（多参考图） |
+| `--prompt` | 手动模式：直接指定时间分段 prompt（兜底用），引用格式：`@Image1` / `@Video1` / `@Audio1` |
+| `--image-list` | 手动模式：图片列表（分镜图在前，角色参考图在后），最多 9 张（fal） |
+| `--duration` | 时长：**4-15s（任意整数）** 或 `auto`（仅 fal） |
+| `--resolution` | 分辨率：**480p**（快速）/ **720p**（平衡），仅 fal provider 支持 |
+| `--seed` | 随机种子：用于复现结果，仅 fal provider 支持 |
+| `--end-user-id` | 终端用户ID：fal 合规要求 |
+| `--model` | 模型版本：`fast`（快速，~60s）/ `high_quality`（高质量），仅 fal provider 支持 |
+| `--generate-audio` | 是否生成音频：默认 true，仅 fal provider 支持 |
 | `--audio-urls` | 音频参考 URL 列表（可选） |
 | `--video-urls` | 视频参考 URL 列表（可选） |
-| `--aspect-ratio` | 宽高比：**16:9/9:16/4:3/3:4/21:9** |
+| `--aspect-ratio` | 宽高比：**16:9/9:16/4:3/3:4/21:9/auto** |
+
+**fal vs piapi 对比**：
+
+| 特性 | fal provider | piapi provider |
+|------|-------------|----------------|
+| API Key | FAL_API_KEY | SEEDANCE_API_KEY |
+| 生成速度 | ~60s | ~120s |
+| resolution | ✓ 480p/720p | ❌ |
+| seed | ✓ | ❌ |
+| model版本 | fast/high_quality | seedance-2-fast/seedance-2 |
+| 图片数量 | 最多 9 张 | 最多 12 张 |
+| 引用格式 | @Image1 | @image1 |
+
+**CLI 示例**：
+
+```bash
+# fal Seedance（自动选择，FAL_API_KEY存在时）
+python video_gen_tools.py video --backend seedance --prompt "..." --duration 10 --output out.mp4
+
+# 指定 resolution 和 seed
+python video_gen_tools.py video --backend seedance --prompt "..." \
+  --resolution 480p --seed 12345 --output out.mp4
+
+# reference-to-video（使用 @Image1 引用）
+python video_gen_tools.py video --backend seedance \
+  --prompt "@Image1 角色在场景中..." \
+  --image-list ref.jpg --duration 8 --output out.mp4
+
+# 高质量版本
+python video_gen_tools.py video --backend seedance --model high_quality \
+  --prompt "..." --image-list ref.jpg --output out.mp4
+
+# 指定 piapi provider
+python video_gen_tools.py video --backend seedance --provider piapi \
+  --prompt "..." --output out.mp4
+```
 
 ### Veo3 参数说明
 

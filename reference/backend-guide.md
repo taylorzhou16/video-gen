@@ -18,14 +18,16 @@
 | 能力 | Kling | Kling Omni | **Seedance 2** | **Veo3** |
 |------|-------|------------|----------------|----------|
 | **后端名** | `kling` | `kling-omni` | `seedance` | `veo3` |
-| **Provider** | official/fal | official/fal | piapi | **compass** |
+| **Provider** | official/fal | official/fal | **fal > piapi** | **compass** |
 | **文生视频** | 3-15s | 3-15s | **4-15s（任意整数）** | **4/6/8s** |
 | **图生视频** | 首帧图（精确控制） | 用 image_list 代替 | 分镜图 + 参考图 | **首帧图** |
-| **image_list 多参考图** | -- | `<<<image_1>>>` 引用 | **`@image1` 引用（最多 12 张）** | -- |
+| **image_list 多参考图** | -- | `<<<image_1>>>` 引用 | **`@Image1` 引用（最多 9 张）** | -- |
 | **智能切镜** | multi-shot 参数控制 | multi-shot 参数控制 | **时间分段 prompt 自动触发** | -- |
 | **首尾帧控制** | `--image` + `--tail-image` | -- | **支持（mode: first_last_frames）** | `--image`（首帧） |
 | **音频参考** | -- | -- | **✓ audio_urls（mp3/wav ≤15s）** | -- |
 | **音画同出** | `--audio` | `--audio` | **✓ 默认生成音频** | **✓ 默认生成音频** |
+| **Resolution参数** | -- | -- | **480p/720p（仅 fal）** | -- |
+| **Seed参数** | -- | -- | **✓（仅 fal）** | -- |
 | **最高分辨率** | 1080p | 1080p | **720p** ⚠️ | **720p** |
 | **宽高比** | 16:9/9:16/1:1 | 16:9/9:16/1:1 | **16:9/9:16/4:3/3:4/1:1/21:9/auto** | 16:9/9:16 |
 | **最佳场景** | 首帧精确控制、场景一致 | 角色一致性、多人物 | **虚构片/短剧、智能切镜、MV** | **全局兜底** |
@@ -92,7 +94,7 @@
 |------|-----|------|
 | `model` | `"seedance"` | 固定值 |
 | `task_type` | `"seedance-2-fast"` / `"seedance-2"` | 快速 / 高质量 |
-| `prompt` | 文本描述 | 支持 `@imageN` / `@videoN` / `@audioN` 引用，支持时间分段 |
+| `prompt` | 文本描述 | 支持 `@ImageN` / `@VideoN` / `@AudioN` 引用，支持时间分段 |
 | `mode` | `text_to_video` / `first_last_frames` / `omni_reference` | 生成模式（必填） |
 | `duration` | **4-15（任意整数）** | 秒数（范围 4-15） |
 | `aspect_ratio` | **21:9/16:9/4:3/1:1/3:4/9:16/auto** | 七种比例 |
@@ -114,7 +116,7 @@
 ```
 Referencing the {segment_id}_frame composition for scene layout and character positioning.
 
-@image1（角色参考图），[视角设定] [主题/风格]；
+@Image1（角色参考图），[视角设定] [主题/风格]；
 
 整体：[镜头整体动作概述]
 
@@ -131,7 +133,7 @@ X-Xs：[切镜] + [场景] + [动作] + [运镜] + [节奏] + [音效/台词]；
 ```
 Referencing the scene_1_seg_1_frame composition for scene layout and character positioning.
 
-@image1，第一人称视角果茶宣传广告；Element_Chuyue 为女性角色；
+@Image1，第一人称视角果茶宣传广告；Element_Chuyue 为女性角色；
 
 整体：第一人称视角展示果茶制作全过程，从摘苹果到成品呈现，自然流畅。
 
@@ -140,7 +142,7 @@ Referencing the scene_1_seg_1_frame composition for scene layout and character p
 2-4s：快速切镜，你的手将苹果块投入雪克杯，加入冰块与茶底，用力摇晃，镜头轻微跟随，节奏轻快，冰块碰撞声卡点鼓点；
 4-6s：第一人称成品特写，分层果茶倒入透明杯，你的手轻挤奶盖，镜头缓慢推进，节奏平稳，液体流动声；
 6-8s：镜头推进，杯身贴上粉红包标，展示分层纹理，节奏舒缓，轻柔背景音；
-8-10s：第一人称手持举杯，@image2，果茶举到镜头前，固定镜头，节奏平稳，杯身标签清晰可见，背景音：「来一口鲜爽」；
+8-10s：第一人称手持举杯，@Image2，果茶举到镜头前，固定镜头，节奏平稳，杯身标签清晰可见，背景音：「来一口鲜爽」；
 
 保持横屏16:9构图，不破坏画面比例
 背景音：「鲜切现摇」「来一口鲜爽」，女声音色。
@@ -151,14 +153,14 @@ Referencing the scene_1_seg_1_frame composition for scene layout and character p
 | index | 用途 | 引用方式 |
 |-------|------|---------|
 | `image_urls[0]` | 分镜图 | `Referencing the {segment_id}_frame composition...` |
-| `image_urls[1]` | 角色参考图 1 | `@image1` |
-| `image_urls[2]` | 角色参考图 2 | `@image2` |
+| `image_urls[1]` | 角色参考图 1 | `@Image1` |
+| `image_urls[2]` | 角色参考图 2 | `@Image2` |
 | ... | ... | ... |
-| `image_urls[9]` | 角色参考图 9（最多） | `@image9` |
+| `image_urls[9]` | 角色参考图 9（最多） | `@Image9` |
 
 **关键点**：
 1. **分镜图是参考，不是首帧精确控制** — 提供整体视觉风格参考
-2. **角色参考图用 `<<<image_N>>>` 引用** — 与 Kling-Omni 统一语法
+2. **角色参考图用 `@Image1` 引用** — fal 格式（piapi 格式会自动转换）
 3. **时间分段自动触发智能切镜** — 无需 `--multi-shot` 参数
 4. **最高 720p** — 需要 1080p 时使用 Kling 或 Vidu
 
@@ -176,7 +178,7 @@ python video_gen_tools.py video \
 # Image-to-Video（分镜图 + 角色参考图）
 python video_gen_tools.py video \
   --backend seedance \
-  --prompt "Referencing the composition... @image1..." \
+  --prompt "Referencing the composition... @Image1..." \
   --image-list generated/frames/scene1_frame.png materials/personas/xiaomei_ref.jpg \
   --duration 10 \
   --output output.mp4
