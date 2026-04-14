@@ -24,7 +24,7 @@ argument-hint: <素材目录或视频文件>
 
 | 后端 | 支持的 Provider | 说明 |
 |------|----------------|------|
-| `seedance` | **仅 piapi** | Seedance 只有 piapi 一个 provider |
+| `seedance` | **fal > piapi** | fal 优先，piapi 为兜底 |
 | `kling-omni` | official, fal | 官方 API 遇限制时可切换 |
 | `kling` | official, fal | 官方 API 遇限制时可切换 |
 | `veo3` | **仅 compass** | Veo3 只有 compass 一个 provider |
@@ -36,7 +36,7 @@ argument-hint: <素材目录或视频文件>
 python video_gen_tools.py video --provider fal --backend kling-omni --image-list ref.jpg ...
 ```
 
-**注意**：Seedance 和 Veo3 不需要指定 `--provider`，因为它们各自只有一个 provider。
+**注意**：Seedance 自动选择 provider（fal 优先），Veo3 不需要指定 `--provider`。
 
 **Provider 自动选择优先级**：官方 API → fal
 
@@ -133,7 +133,7 @@ python video_gen_tools.py setup
 > 请选择视频生成 API（可后续更换）：
 >
 > **1. Seedance（推荐）** — 字节跳动出品，智能切镜 + 多参考图，适合虚构片/短剧/MV
->    - 需要：Seedance API Key（from piapi.ai）
+>    - 需要：FAL_API_KEY（优先）或 SEEDANCE_API_KEY（piapi兜底）
 >
 > **2. Kling 官方** — 快手出品，首帧精确控制，适合写实/广告片
 >    - 需要：Kling Access Key + Secret Key（from klingai.kuaishou.com）
