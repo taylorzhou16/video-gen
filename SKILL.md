@@ -162,6 +162,8 @@ python video_gen_tools.py setup --set-key COMPASS_API_KEY=xxx
 
 **可选服务**（保存 key 后继续询问）：
 - 音乐生成（Suno）：`SUNO_API_KEY`
+- **ElevenLabs TTS（优先）**：`FAL_API_KEY`
+- **Gemini TTS（兜底）**：`COMPASS_API_KEY`
 
 用户可以跳过可选服务。
 
@@ -940,23 +942,64 @@ python video_gen_tools.py video \
 
 **触发条件**：读取 `storyboard.json` 的 `narration_segments`，若存在则触发。
 
+**TTS 后端优先级**：ElevenLabs TTS > Gemini TTS
+
 **生成流程**：
 
 1. **读取 narration_config 和 narration_segments**
 2. **按分段逐个调用 TTS**：
 
 ```bash
-# 每段旁白单独生成
+# ElevenLabs TTS（默认，高质量）
 python video_gen_tools.py tts \
   --text "这是一个宁静的下午..." \
-  --voice-style "温柔女声，语速适中" \
+  --voice female_narrator \
+  --video-type documentary \
   --output generated/narration/narr_1.mp3
 
+# 使用已有 voice_id（跳过 Design/Create，更快）
 python video_gen_tools.py tts \
   --text "她坐在窗边..." \
-  --voice-style "温柔女声，语速适中" \
+  --voice-id "abc123xyz" \
   --output generated/narration/narr_2.mp3
+
+# 强制使用 Gemini TTS（兜底）
+python video_gen_tools.py tts \
+  --text "思绪飘向远方..." \
+  --backend gemini \
+  --voice female_narrator \
+  --output generated/narration/narr_3.mp3
 ```
+
+**voice 参数映射**：
+
+| 参数值 | ElevenLabs 音色 | Gemini 音色（兜底） |
+|-------|----------------|-------------------|
+| `female_narrator` | 创建新声音（专业女声） | Kore |
+| `female_gentle` | 内置 Alice（温柔） | Aoede |
+| `female_bright` | 内置 Charlotte（明亮） | Leda |
+| `male_narrator` | 内置 George（专业男声） | Charon |
+| `male_warm` | 内置 Adam（温暖） | Orus |
+
+**stability 参数（仅 ElevenLabs）**：
+
+| 视频类型 | Stability | 说明 |
+|---------|-----------|------|
+| cinematic | 0.22 | 戏剧角色，高表现力 |
+| vlog | 0.28 | 情感叙事，平衡稳定 |
+| documentary | 0.35 | 专业解说，稳定输出 |
+| commercial | 0.30 | 广告片，稳定但灵活 |
+
+**文本增强**（ElevenLabs 自动执行）：
+
+自动插入情感/节奏/生理标签，不改写原文用词：
+- 情感：`[thoughtful]`, `[excited]`, `[calm]`
+- 节奏：`[short pause]`, `[slows down]`, `[emphasized]`
+- 生理：`[sighs]`, `[exhales]`
+
+**降级机制**：
+- ElevenLabs 失败时自动降级到 Gemini TTS
+- 返回结果中标注 `backend: gemini_fallback`
 
 3. **输出文件命名**：按 `segment_id` 命名（`narr_1.mp3`, `narr_2.mp3`...）
 
@@ -1103,8 +1146,14 @@ python video_gen_tools.py video \
 # 音乐（必须传 --creative，从 creative.json 读取 prompt 和 style）
 python video_gen_tools.py music --creative creative/creative.json --output <输出>
 
-# 旁白（按 narration_segments 分段调用）
-python video_gen_tools.py tts --text <分段文案> --voice female_narrator --emotion gentle --output generated/narration/narr_1.mp3
+# 旁白（ElevenLabs 优先，Gemini 兜底）
+python video_gen_tools.py tts --text <分段文案> --voice female_narrator --video-type documentary --output generated/narration/narr_1.mp3
+
+# 旁白（使用已有 voice_id）
+python video_gen_tools.py tts --text <分段文案> --voice-id <voice_id> --output generated/narration/narr_2.mp3
+
+# 旁白（强制 Gemini）
+python video_gen_tools.py tts --text <分段文案> --backend gemini --voice female_narrator --output generated/narration/narr_3.mp3
 
 # 图片生成
 python video_gen_tools.py image --prompt <描述> --aspect-ratio {aspect_ratio} --output <输出>

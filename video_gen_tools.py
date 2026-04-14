@@ -3098,6 +3098,417 @@ class GeminiTTSClient:
             return {"success": False, "error": str(e)}
 
 
+class ElevenLabsTTSClient:
+    """ElevenLabs TTS 客户端（通过 fal.ai API）
+
+    三步流程：Design → Create → TTS
+    优先级：ElevenLabs TTS > Gemini TTS（兜底）
+    """
+
+    # fal.ai API 端点
+    ENDPOINTS = {
+        "design": "fal-ai/elevenlabs/text-to-voice/design/eleven-v3",
+        "create": "fal-ai/elevenlabs/text-to-voice/create",
+        "tts": "fal-ai/elevenlabs/tts/eleven-v3"
+    }
+
+    # 内置音色（可直接使用，无需 Design/Create）
+    BUILTIN_VOICES = {
+        "rachel": "温暖女声，情感丰富",
+        "adam": "深沉男声，专业稳重",
+        "charlotte": "清亮女声，活力充沛",
+        "callum": "年轻男声，亲切自然",
+        "george": "成熟男声，沉稳有力",
+        "alice": "温柔女声，柔和亲切",
+        "aria": "戏剧女声，表现力强"
+    }
+
+    # voice_style 到内置音色和 stability 的映射
+    VOICE_STYLE_MAP = {
+        # 女声
+        "female_narrator": {
+            "builtin": None,  # 需创建新声音
+            "design_prompt": "Chinese Mandarin accent. Female, 30-35 years old. Medium-low pitch. Studio quality spoken performance. Character: Professional narrator, documentary style. Emotional arc: calm → informative → confident. Style: Clear and measured, with subtle warmth. Pace: Moderate, consistent delivery. Spoken, not sung.",
+            "stability": 0.32
+        },
+        "female_gentle": {
+            "builtin": "Alice",
+            "design_prompt": "Chinese Mandarin accent. Female, 25-30 years old. Medium pitch, soft tone. Studio quality spoken performance. Character: Gentle storyteller, warm and caring. Emotional arc: soft → tender → reassuring. Style: Gentle and flowing, with natural pauses. Pace: Slow to moderate, unhurried. Spoken, not sung.",
+            "stability": 0.28
+        },
+        "female_soft": {
+            "builtin": None,
+            "design_prompt": "Chinese Mandarin accent. Female, 20-25 years old. Soft, breathy quality. Studio quality spoken performance. Character: Soft-spoken companion, intimate and close. Emotional arc: quiet → intimate → peaceful. Style: Whispery and close, with gentle emphasis. Pace: Slow, deliberate. Spoken, not sung.",
+            "stability": 0.25
+        },
+        "female_bright": {
+            "builtin": "Charlotte",
+            "design_prompt": "Chinese Mandarin accent. Female, 20-25 years old. Bright, energetic pitch. Studio quality spoken performance. Character: Energetic presenter, upbeat and engaging. Emotional arc: bright → excited → enthusiastic. Style: Bright and animated, with dynamic energy. Pace: Quick, rhythmic. Spoken, not sung.",
+            "stability": 0.30
+        },
+        # 男声
+        "male_narrator": {
+            "builtin": "George",
+            "design_prompt": "Chinese Mandarin accent. Male, 35-40 years old. Deep, resonant pitch. Studio quality spoken performance. Character: Professional narrator, authoritative and clear. Emotional arc: steady → authoritative → confident. Style: Deep and measured, with gravitas. Pace: Moderate, controlled. Spoken, not sung.",
+            "stability": 0.32
+        },
+        "male_warm": {
+            "builtin": "Adam",
+            "design_prompt": "Chinese Mandarin accent. Male, 30-35 years old. Warm, rich timbre. Studio quality spoken performance. Character: Warm host, friendly and approachable. Emotional arc: warm → welcoming → sincere. Style: Warm and inviting, with natural warmth. Pace: Moderate, relaxed. Spoken, not sung.",
+            "stability": 0.28
+        },
+        "male_deep": {
+            "builtin": None,
+            "design_prompt": "Chinese Mandarin accent. Male, 40-45 years old. Very deep, powerful voice. Studio quality spoken performance. Character: Deep narrator, commanding presence. Emotional arc: powerful → authoritative → commanding. Style: Deep and resonant, with weight. Pace: Slow, deliberate. Spoken, not sung.",
+            "stability": 0.35
+        },
+        "male_bright": {
+            "builtin": "Callum",
+            "design_prompt": "Chinese Mandarin accent. Male, 25-30 years old. Bright, clear pitch. Studio quality spoken performance. Character: Energetic presenter, dynamic and engaging. Emotional arc: energetic → dynamic → animated. Style: Bright and punchy, with energy. Pace: Quick, rhythmic. Spoken, not sung.",
+            "stability": 0.30
+        }
+    }
+
+    # 视频类型到 stability 的映射
+    STABILITY_MAP = {
+        "cinematic": 0.22,      # 戏剧角色，高表现力
+        "vlog": 0.28,           # 情感叙事，平衡稳定
+        "documentary": 0.35,    # 专业解说，更稳定
+        "commercial": 0.30,     # 广告片，稳定但灵活
+        "artistic": 0.20        # 艺术/实验，最大表现力
+    }
+
+    # 文本增强标签
+    ENHANCE_TAGS = {
+        "emotion": ["[thoughtful]", "[curious]", "[excited]", "[calm]", "[reassuring]", "[hopeful]"],
+        "rhythm": ["[short pause]", "[long pause]", "[pause]", "[slows down]", "[deliberate]", "[emphasized]"],
+        "physio": ["[sighs]", "[exhales]", "[breathes]", "[clears throat]"]
+    }
+
+    def _pad_design_text(self, text: str, min_length: int = 100) -> str:
+        """确保 design 采样文本满足最小长度要求"""
+        if len(text) >= min_length:
+            return text[:1000]
+        # 补充填充文本
+        filler = "这是一段用于声音设计的示例文本，请忽略内容本身，专注于声音的音色和表达。声音应该温柔而富有情感，适合讲述故事和回忆。"
+        return f"{text} {filler}"[:1000]
+
+    def _enhance_text(self, text: str, video_type: str = None) -> str:
+        """文本增强：插入情感/节奏/生理标签
+
+        规则：不改写原文用词，只改标点、插入标签
+        """
+        if not text:
+            return text
+
+        # 根据视频类型选择增强频率
+        frequencies = {
+            "cinematic": 0.6,
+            "vlog": 0.4,
+            "documentary": 0.3,
+            "commercial": 0.5,
+            "artistic": 0.7
+        }
+        freq = frequencies.get(video_type, 0.4)
+
+        # 分句（中英文兼容）
+        import re
+        sentences = re.split(r'([。！？.!?])', text)
+
+        enhanced = []
+        tag_idx = 0
+
+        for i in range(0, len(sentences) - 1, 2):
+            sentence = sentences[i]
+            punct = sentences[i + 1] if i + 1 < len(sentences) else ""
+
+            if sentence.strip():
+                # 按频率决定是否添加标签
+                if (tag_idx % 3) < int(freq * 3):
+                    # 选择标签类型
+                    tag_type = tag_idx % 3
+                    if tag_type == 0:
+                        tag = self.ENHANCE_TAGS["emotion"][tag_idx % len(self.ENHANCE_TAGS["emotion"])]
+                    elif tag_type == 1:
+                        tag = self.ENHANCE_TAGS["rhythm"][tag_idx % len(self.ENHANCE_TAGS["rhythm"])]
+                    else:
+                        tag = self.ENHANCE_TAGS["physio"][tag_idx % len(self.ENHANCE_TAGS["physio"])]
+
+                    enhanced.append(f"{tag} {sentence}{punct}")
+                else:
+                    enhanced.append(f"{sentence}{punct}")
+
+                tag_idx += 1
+
+        # 处理剩余部分
+        if len(sentences) % 2 == 1 and sentences[-1].strip():
+            enhanced.append(sentences[-1])
+
+        return " ".join(enhanced)
+
+    async def _call_fal(self, endpoint: str, payload: dict) -> dict:
+        """调用 fal.ai API"""
+        import fal_client
+
+        # 设置 FAL_KEY
+        if Config.FAL_API_KEY:
+            os.environ["FAL_KEY"] = Config.FAL_API_KEY
+
+        try:
+            result = fal_client.subscribe(endpoint, payload, with_logs=False)
+            return {"success": True, "result": result}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def _download_audio(self, url: str, output: str) -> bool:
+        """下载音频文件"""
+        import requests
+        try:
+            resp = requests.get(url, timeout=120)
+            resp.raise_for_status()
+            Path(output).parent.mkdir(parents=True, exist_ok=True)
+            with open(output, "wb") as f:
+                f.write(resp.content)
+            return True
+        except Exception as e:
+            logger.error(f"❌ 音频下载失败: {e}")
+            return False
+
+    async def design_voice(self, design_prompt: str, sample_text: str = None) -> Dict[str, Any]:
+        """Design 端点：生成声音预览
+
+        Args:
+            design_prompt: 声音设计描述（遵循模板格式）
+            sample_text: 可选的样例文本（用于预览）
+
+        Returns:
+            {"success": True, "previews": [...], "selected_voice_id": "..."}
+        """
+        payload = {
+            "prompt": design_prompt,
+            "text": self._pad_design_text(sample_text or design_prompt),
+            "auto_generate_text": False,
+            "loudness": 0.5,
+            "guidance_scale": 5,
+            "output_format": "mp3_44100_128"
+        }
+
+        logger.info(f"📤 ElevenLabs Design: {design_prompt[:50]}...")
+        result = await self._call_fal(self.ENDPOINTS["design"], payload)
+
+        if not result.get("success"):
+            return result
+
+        previews = result["result"].get("previews", [])
+        if not previews:
+            return {"success": False, "error": "No voice previews generated"}
+
+        selected_id = previews[0].get("generated_voice_id")
+        preview_url = previews[0].get("audio", {}).get("url") if isinstance(previews[0].get("audio"), dict) else previews[0].get("audio")
+
+        logger.info(f"✅ ElevenLabs Design 完成，选中 voice_id: {selected_id}")
+
+        return {
+            "success": True,
+            "previews": previews,
+            "selected_voice_id": selected_id,
+            "preview_url": preview_url
+        }
+
+    async def create_voice(self, voice_name: str, voice_description: str,
+                          generated_voice_id: str) -> Dict[str, Any]:
+        """Create 端点：创建永久 voice_id
+
+        Args:
+            voice_name: 唯一的声音名称
+            voice_description: 声音描述（需 ≥20 字符）
+            generated_voice_id: Design 返回的预览 ID
+
+        Returns:
+            {"success": True, "voice_id": "..."}
+        """
+        # 确保 voice_description 足够长
+        if len(voice_description) < 20:
+            voice_description = f"{voice_description}，高质量专业录音级声音表现"
+
+        payload = {
+            "voice_name": voice_name,
+            "voice_description": voice_description,
+            "generated_voice_id": generated_voice_id,
+            "labels": {"locale": "zh"}
+        }
+
+        logger.info(f"📤 ElevenLabs Create: {voice_name}")
+        result = await self._call_fal(self.ENDPOINTS["create"], payload)
+
+        if not result.get("success"):
+            return result
+
+        voice_id = result["result"].get("voice_id", generated_voice_id)
+        logger.info(f"✅ ElevenLabs Create 完成，voice_id: {voice_id}")
+
+        return {
+            "success": True,
+            "voice_id": voice_id,
+            "voice_name": voice_name
+        }
+
+    async def synthesize(
+        self,
+        text: str,
+        output: str,
+        voice_id: str = None,
+        voice_style: str = None,
+        stability: float = None,
+        video_type: str = None,
+        enhance_text: bool = True,
+        voice_name: str = None,
+        language: str = "zh"
+    ) -> Dict[str, Any]:
+        """TTS 合成（完整流程）
+
+        Args:
+            text: 要朗读的文本
+            output: 输出文件路径
+            voice_id: 已有 voice_id（跳过 Design/Create）
+            voice_style: 音色风格（映射到 design_prompt 或 builtin voice）
+            stability: 稳定参数（0-1，越低越戏剧化）
+            video_type: 视频类型（用于自动调整 stability）
+            enhance_text: 是否增强文本（插入情感标签）
+            voice_name: 新声音的名称（用于 Create）
+            language: 语言代码（ISO 639-1）
+
+        Returns:
+            {"success": True, "output": "...", "duration": ..., "voice_id": "..."}
+        """
+        # 检查 FAL_API_KEY
+        if not Config.FAL_API_KEY:
+            return {
+                "success": False,
+                "error": "FAL_API_KEY 未配置",
+                "hint": "请在 config.json 中添加 FAL_API_KEY",
+                "fallback": True  # 标记可降级
+            }
+
+        # Step 1: 确定 voice_id
+        final_voice_id = voice_id
+
+        if not final_voice_id and voice_style:
+            style_config = self.VOICE_STYLE_MAP.get(voice_style)
+
+            if style_config and style_config.get("builtin"):
+                # 使用内置音色
+                final_voice_id = style_config["builtin"]
+                logger.info(f"📝 使用内置音色: {final_voice_id}")
+            elif style_config:
+                # 需要创建新声音
+                design_result = await self.design_voice(
+                    design_prompt=style_config["design_prompt"],
+                    sample_text=text[:50]
+                )
+
+                if not design_result.get("success"):
+                    return {
+                        "success": False,
+                        "error": design_result.get("error"),
+                        "fallback": True
+                    }
+
+                # Create voice
+                import time
+                vname = voice_name or f"{voice_style}_{int(time.time())}"
+                create_result = await self.create_voice(
+                    voice_name=vname,
+                    voice_description=style_config["design_prompt"][:200],
+                    generated_voice_id=design_result["selected_voice_id"]
+                )
+
+                if not create_result.get("success"):
+                    return {
+                        "success": False,
+                        "error": create_result.get("error"),
+                        "fallback": True
+                    }
+
+                final_voice_id = create_result["voice_id"]
+                logger.info(f"📝 创建新声音: {vname} → {final_voice_id}")
+            else:
+                # 未知 voice_style，使用默认内置音色
+                final_voice_id = "alice"
+                logger.info(f"📝 未知 voice_style，使用默认: alice")
+
+        if not final_voice_id:
+            final_voice_id = "rachel"  # 默认内置音色
+
+        # Step 2: 文本增强（可选）
+        final_text = text
+        if enhance_text:
+            final_text = self._enhance_text(text, video_type)
+            if final_text != text:
+                logger.info(f"📝 文本已增强")
+
+        # Step 3: 确定 stability
+        if stability is None:
+            if video_type and video_type in self.STABILITY_MAP:
+                stability = self.STABILITY_MAP[video_type]
+            elif voice_style and voice_style in self.VOICE_STYLE_MAP:
+                stability = self.VOICE_STYLE_MAP[voice_style].get("stability", 0.28)
+            else:
+                stability = 0.28
+
+        # Step 4: TTS 合成
+        logger.info(f"📤 ElevenLabs TTS合成: {text[:30]}... (voice: {final_voice_id}, stability: {stability})")
+
+        payload = {
+            "text": final_text,
+            "voice": final_voice_id,
+            "stability": stability,
+            "language_code": language,
+            "apply_text_normalization": "auto",
+            "output_format": "mp3_44100_128"
+        }
+
+        result = await self._call_fal(self.ENDPOINTS["tts"], payload)
+
+        if not result.get("success"):
+            # 尝试去掉标签重试
+            if enhance_text and final_text != text:
+                logger.warning(f"⚠️ TTS 失败，去掉标签重试")
+                payload["text"] = text
+                result = await self._call_fal(self.ENDPOINTS["tts"], payload)
+
+            if not result.get("success"):
+                return {
+                    "success": False,
+                    "error": result.get("error"),
+                    "fallback": True
+                }
+
+        # 下载音频
+        audio_data = result["result"].get("audio", {})
+        audio_url = audio_data.get("url") if isinstance(audio_data, dict) else audio_data
+
+        if not audio_url:
+            return {"success": False, "error": "No audio URL in response", "fallback": True}
+
+        if not await self._download_audio(audio_url, output):
+            return {"success": False, "error": "Audio download failed", "fallback": True}
+
+        # 获取时长
+        duration = get_audio_duration(output)
+        logger.info(f"✅ ElevenLabs TTS已保存: {output} ({duration:.2f}s)")
+
+        return {
+            "success": True,
+            "output": output,
+            "duration": duration,
+            "duration_ms": int(duration * 1000),
+            "voice_id": final_voice_id,
+            "stability": stability,
+            "backend": "elevenlabs"
+        }
+
+
 def get_audio_duration(audio_path: str) -> float:
     """
     用 ffprobe 获取音频精确时长（秒）
@@ -4418,33 +4829,71 @@ async def cmd_music(args):
 
 
 async def cmd_tts(args):
-    """TTS合成命令 - 使用 Gemini TTS（通过 Compass API）"""
-    if not Config.COMPASS_API_KEY:
-        print(json.dumps({
-            "success": False,
-            "error": "COMPASS_API_KEY 未配置",
-            "hint": "请配置 COMPASS_API_KEY 以使用 Gemini TTS",
-            "get_key": "访问 compass.llm.shopee.io 获取 API key"
-        }, indent=2, ensure_ascii=False))
-        return 1
+    """TTS合成命令 - 支持 ElevenLabs（优先）和 Gemini（兜底）"""
+    backend = getattr(args, 'backend', 'elevenlabs')
 
-    logger.info("🔧 使用 Gemini TTS (Compass)")
-    client = GeminiTTSClient()
-    result = await client.synthesize(
-        text=args.text,
-        output=args.output,
-        voice=args.voice,
-        emotion=args.emotion,
-        speed=args.speed,
-        prompt=getattr(args, 'prompt', None),
-    )
+    # ElevenLabs TTS（优先）
+    if backend == "elevenlabs":
+        if not Config.FAL_API_KEY:
+            logger.warning("⚠️ FAL_API_KEY 未配置，降级到 Gemini TTS")
+            backend = "gemini"
+        else:
+            logger.info("🔧 使用 ElevenLabs TTS (via fal)")
+            client = ElevenLabsTTSClient()
+            result = await client.synthesize(
+                text=args.text,
+                output=args.output,
+                voice_id=getattr(args, 'voice_id', None),
+                voice_style=args.voice,
+                stability=getattr(args, 'stability', None),
+                video_type=getattr(args, 'video_type', None),
+                enhance_text=getattr(args, 'enhance_text', True),
+                voice_name=getattr(args, 'voice_name', None)
+            )
 
-    if result.get("success"):
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-        return 0
-    else:
-        print(f"错误: {result.get('error')}")
-        return 1
+            if result.get("success"):
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+                return 0
+
+            # ElevenLabs 失败，检查是否可以降级
+            if result.get("fallback"):
+                logger.warning(f"⚠️ ElevenLabs TTS 失败: {result.get('error')}, 降级到 Gemini")
+                backend = "gemini"
+            else:
+                print(f"错误: {result.get('error')}")
+                return 1
+
+    # Gemini TTS（兜底）
+    if backend == "gemini":
+        if not Config.COMPASS_API_KEY:
+            print(json.dumps({
+                "success": False,
+                "error": "COMPASS_API_KEY 未配置",
+                "hint": "请配置 COMPASS_API_KEY 以使用 Gemini TTS",
+                "get_key": "访问 compass.llm.shopee.io 获取 API key"
+            }, indent=2, ensure_ascii=False))
+            return 1
+
+        logger.info("🔧 使用 Gemini TTS (Compass) - 兜底模式")
+        client = GeminiTTSClient()
+        result = await client.synthesize(
+            text=args.text,
+            output=args.output,
+            voice=args.voice,
+            emotion=args.emotion,
+            speed=args.speed,
+            prompt=getattr(args, 'prompt', None),
+        )
+
+        if result.get("success"):
+            # 标记是降级的结果
+            if backend == "gemini" and getattr(args, 'backend', 'elevenlabs') == 'elevenlabs':
+                result["backend"] = "gemini_fallback"
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 0
+        else:
+            print(f"错误: {result.get('error')}")
+            return 1
 
 
 async def cmd_image(args):
@@ -4822,17 +5271,28 @@ def main():
     music_parser.add_argument("--output", "-o", help="输出文件路径")
 
     # tts 子命令
-    tts_parser = subparsers.add_parser("tts", help="生成语音")
+    tts_parser = subparsers.add_parser("tts", help="生成语音（ElevenLabs 优先，Gemini 兜底）")
     tts_parser.add_argument("--text", "-t", required=True, help="要合成的文本")
     tts_parser.add_argument("--output", "-o", required=True, help="输出文件路径")
+    tts_parser.add_argument("--backend", "-b", choices=["elevenlabs", "gemini"],
+                           default="elevenlabs", help="TTS 后端（默认 elevenlabs，gemini 为兜底）")
     tts_parser.add_argument("--voice", "-v", default="female_narrator",
                            choices=["female_narrator", "female_gentle", "female_soft", "female_bright",
                                     "male_narrator", "male_warm", "male_deep", "male_bright"],
-                           help="音色")
+                           help="音色风格（映射到 ElevenLabs 内置音色或创建新声音）")
+    tts_parser.add_argument("--voice-id", help="已有的 ElevenLabs voice_id（跳过 Design/Create）")
+    tts_parser.add_argument("--stability", type=float, help="稳定参数（0-1，戏剧角色 0.20-0.25，情感叙事 0.25-0.35）")
+    tts_parser.add_argument("--video-type", choices=["cinematic", "vlog", "documentary", "commercial", "artistic"],
+                           help="视频类型（用于自动调整 stability 和文本增强）")
+    tts_parser.add_argument("--enhance-text", action="store_true", default=True,
+                           help="自动增强文本（插入情感/节奏标签）")
+    tts_parser.add_argument("--no-enhance-text", dest="enhance_text", action="store_false",
+                           help="不增强文本，原样朗读")
+    tts_parser.add_argument("--voice-name", help="新声音的名称（用于 Create）")
     tts_parser.add_argument("--emotion", "-e", choices=["neutral", "happy", "sad", "gentle", "serious"],
                            help="情感（已废弃，建议使用 --prompt）")
-    tts_parser.add_argument("--prompt", "-p", help="风格指令，控制口音/情感/语气/人设（如：幽默解说，略带调侃）")
-    tts_parser.add_argument("--speed", type=float, default=1.0, help="语速")
+    tts_parser.add_argument("--prompt", "-p", help="风格指令（Gemini TTS 专用，ElevenLabs 使用文本增强）")
+    tts_parser.add_argument("--speed", type=float, default=1.0, help="语速（仅 Gemini TTS 支持）")
 
     # image 子命令
     image_parser = subparsers.add_parser("image", help="生成图片")
