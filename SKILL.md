@@ -27,7 +27,6 @@ argument-hint: <素材目录或视频文件>
 | `seedance` | **fal > piapi** | fal 优先，piapi 为兜底 |
 | `kling-omni` | official, fal | 官方 API 遇限制时可切换 |
 | `kling` | official, fal | 官方 API 遇限制时可切换 |
-| `veo3` | **仅 compass** | Veo3 只有 compass 一个 provider |
 
 当 Kling 官方 API 遇到并发限制（429）时，可使用 `--provider fal`：
 
@@ -36,7 +35,7 @@ argument-hint: <素材目录或视频文件>
 python video_gen_tools.py video --provider fal --backend kling-omni --image-list ref.jpg ...
 ```
 
-**注意**：Seedance 自动选择 provider（fal 优先），Veo3 不需要指定 `--provider`。
+**注意**：Seedance 自动选择 provider（fal 优先）。
 
 **Provider 自动选择优先级**：官方 API → fal
 
@@ -60,11 +59,12 @@ python video_gen_tools.py video --provider fal --backend kling-omni --image-list
 | **广告片（有真实素材）** | 有 | Kling-3.0 | — | 首帧精确控制，真实素材 |
 | **MV短片** | 无（动漫） | **Seedance** | Kling-Omni | 长镜头 + 音乐驱动 |
 | **MV短片** | **有真人** | **Kling-Omni** | — | 真人素材禁用 Seedance |
-| **Vlog/写实类** | 有 | Kling-3.0 | Veo3 | 首帧精确控制，不走 Seedance |
+| **Vlog/写实类** | 有 | Kling-3.0 | — | 首帧精确控制，不走 Seedance |
 
-**Veo3 作为全局最兜底的视频生成模型**：除非用户主动要求使用 Veo3，否则不主动调用 Veo3。Veo3 时长固定（4/6/8s）、分辨率最高 720p，仅在所有其他后端失败时作为最终备选。
-
-**visual_style 只影响用户照片处理方式（如有用户照片）**：
+**关键规则**：
+- **Seedance 优先用于虚构内容**（智能切镜是核心优势）
+- **Kling-Omni 作为 Seedance 失败时的降级备选**
+- **有真实素材时用 Kling**（首帧精确控制）
 
 | visual_style | 用户照片处理 | 说明 |
 |--------------|-------------|------|
@@ -140,9 +140,6 @@ python video_gen_tools.py setup
 >
 > **3. Kling via fal.ai** — 绕过官方并发限制
 >    - 需要：fal.ai API Key（from fal.ai）
-> **4. Veo3 via Compass** — Google Veo3，全局兜底模型（4/6/8s）
->    - 需要：Compass API Key（from compass.llm.shopee.io）
->    - 说明：仅在所有其他后端失败时使用，或用户主动要求
 
 用户选择后，要求提供对应的 API key，然后保存：
 
@@ -155,15 +152,13 @@ python video_gen_tools.py setup --set-key KLING_ACCESS_KEY=xxx KLING_SECRET_KEY=
 
 # 例：用户选择 fal
 python video_gen_tools.py setup --set-key FAL_API_KEY=xxx
-
-# 例：用户选择 Veo3
-python video_gen_tools.py setup --set-key COMPASS_API_KEY=xxx
 ```
 
 **可选服务**（保存 key 后继续询问）：
 - 音乐生成（Suno）：`SUNO_API_KEY`
 - **ElevenLabs TTS（优先）**：`FAL_API_KEY`
 - **Gemini TTS（兜底）**：`COMPASS_API_KEY`
+- **Gemini 图片生成**：`COMPASS_API_KEY`
 
 用户可以跳过可选服务。
 
@@ -584,14 +579,13 @@ storyboard["character_image_mapping"] = image_mapping
 | **广告片（有真实素材）** | 有 | Kling-3.0 | — | 首帧精确控制，真实素材 |
 | **MV短片** | 无（动漫） | **Seedance** | Kling-Omni | 长镜头 + 音乐驱动 |
 | **MV短片** | **有真人** | **Kling-Omni** | — | 真人素材禁用 Seedance |
-| **Vlog/写实类** | 有 | Kling-3.0 | Veo3 | 首帧精确控制，不走 Seedance |
+| **Vlog/写实类** | 有 | Kling-3.0 | — | 首帧精确控制，不走 Seedance |
 
 **首帧控制能力对比**：
 
 | 后端 | 首帧控制 | 说明 |
 |------|---------|------|
 | **Kling-3.0** | ✅ `--image` | 视频从此图开始 |
-| **Veo3** | ✅ `--image` | 首帧精确控制 |
 | **Seedance** | ❌ 参考图 | 分镜图是视觉风格参考，不是首帧 |
 | **Kling-Omni** | ❌ 参考图 | 只有 reference2video，无 img2video |
 
@@ -604,7 +598,7 @@ storyboard["character_image_mapping"] = image_mapping
 1. **真人素材检测 → 禁用 Seedance**（顶层过滤）
 2. **同一项目使用同一模型**
 3. **虚构片不使用 text2video**
-4. **需要首帧控制时只能用 Kling 或 Vidu**
+4. **需要首帧控制时只能用 Kling**
 5. **Seedance/Omni 分镜图是参考，不是首帧精确控制**
 
 **执行方式差异（关键）**：
@@ -737,7 +731,6 @@ python video_gen_tools.py validate --storyboard storyboard/storyboard.json
 | **Seedance** | scene-level 分镜图（scene_1_frame.png），无 shot-level 分镜 | 无特殊要求 |
 | **Kling-Omni** | **每个 shot 有 image_prompt 和 frame_path** | 缺少 shot-level 分镜结构 |
 | **Kling img2video** | 每个 shot 有 frame_path，frame_strategy = first_frame_only | 缺少首帧图 |
-| **Veo3** | 无特殊分镜要求 | 无 |
 
 **Kling-Omni 链路一致性检查**：
 
@@ -1127,21 +1120,6 @@ python video_gen_tools.py video \
   --image-list frame.png ref.jpg \
   --duration 10 \
   --output output.mp4
-
-# Veo3 文生视频（全局兜底，仅支持 4/6/8s）
-python video_gen_tools.py video \
-  --backend veo3 \
-  --prompt <描述> \
-  --duration 8 \
-  --output generated/videos/shot.mp4
-
-# Veo3 图生视频（首帧控制）
-python video_gen_tools.py video \
-  --backend veo3 \
-  --image <首帧图> \
-  --prompt <描述> \
-  --duration 8 \
-  --output generated/videos/shot.mp4
 
 # 音乐（必须传 --creative，从 creative.json 读取 prompt 和 style）
 python video_gen_tools.py music --creative creative/creative.json --output <输出>

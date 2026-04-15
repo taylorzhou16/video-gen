@@ -283,15 +283,14 @@ MODE_BACKEND_MAP = {
     "omni-video": "kling-omni",
     "img2video": "kling",
     "text2video": "kling",
-    "veo3-text2video": "veo3",
-    "veo3-img2video": "veo3",
+    # veo3 已废弃，不再支持
 }
 
 BACKEND_PROVIDER_KEYS = {
     "seedance": ["FAL_API_KEY", "SEEDANCE_API_KEY"],  # fal优先
     "kling": ["KLING_ACCESS_KEY", "FAL_API_KEY"],
     "kling-omni": ["KLING_ACCESS_KEY", "FAL_API_KEY"],
-    "veo3": ["COMPASS_API_KEY"],
+    # veo3 已废弃，COMPASS_API_KEY 仅用于 Gemini 图片/TTS
 }
 
 
@@ -354,9 +353,7 @@ def validate_storyboard(storyboard_path: str) -> Dict[str, Any]:
             if backend in ("kling", "kling-omni"):
                 if duration < 3 or duration > 15:
                     errors.append(f"[{shot_id}] Kling 时长必须 3-15s，当前 {duration}s")
-            elif backend == "veo3":
-                if duration not in [4, 6, 8]:
-                    errors.append(f"[{shot_id}] Veo3 时长必须为 4/6/8s，当前 {duration}s")
+            # veo3 已废弃，不再校验
 
             # Seedance shots 收集（后续按 scene 汇总）
             if backend == "seedance":
@@ -570,7 +567,7 @@ class ViduClient:
     Vidu 视频生成客户端（通过 Yunwu API）
 
     .. deprecated::
-        Vidu 后端已废弃，不再支持。请使用 Kling、Kling-Omni、Seedance 或 Veo3。
+        Vidu 后端已废弃，不再支持。请使用 Kling、Kling-Omni 或 Seedance。
         此类保留仅为向后兼容，将在未来版本中删除。
     """
 
@@ -581,7 +578,7 @@ class ViduClient:
     def __init__(self):
         import warnings
         warnings.warn(
-            "ViduClient 已废弃，请使用 KlingClient、KlingOmniClient、SeedanceClient 或 Veo3Client",
+            "ViduClient 已废弃，请使用 KlingClient、KlingOmniClient 或 SeedanceClient",
             DeprecationWarning,
             stacklevel=2
         )
@@ -2565,10 +2562,25 @@ class FalSeedanceClient:
         await self.client.aclose()
 
 
+# ============== Veo3 视频生成（已废弃） ==============
+
+
 class Veo3Client:
-    """Google Veo3 视频生成客户端（通过 Compass 代理）"""
+    """
+    Google Veo3 视频生成客户端（通过 Compass 代理）
+
+    .. deprecated::
+        Veo3 后端已废弃，不再支持。请使用 Kling、Kling-Omni 或 Seedance。
+        此类保留仅为向后兼容，将在未来版本中删除。
+    """
 
     def __init__(self):
+        import warnings
+        warnings.warn(
+            "Veo3Client 已废弃，请使用 KlingClient、KlingOmniClient 或 SeedanceClient",
+            DeprecationWarning,
+            stacklevel=2
+        )
         import httpx
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0))
         self.api_key = Config.COMPASS_API_KEY
@@ -4718,6 +4730,8 @@ async def cmd_video(args):
             await client.close()
 
     elif backend == 'veo3':
+        # Veo3 已废弃，但仍保留代码向后兼容
+        logger.warning("⚠️ Veo3 后端已废弃，建议使用 Kling、Kling-Omni 或 Seedance")
         if not Config.COMPASS_API_KEY:
             print(json.dumps({
                 "success": False,
@@ -4758,7 +4772,7 @@ async def cmd_video(args):
     print(json.dumps({
         "success": False,
         "error": f"不支持的后端: {backend}",
-        "supported_backends": ["kling", "kling-omni", "seedance", "veo3"]
+        "supported_backends": ["kling", "kling-omni", "seedance"]
     }, indent=2, ensure_ascii=False))
     return 1
 
@@ -5215,8 +5229,8 @@ def main():
 
     # setup 子命令（交互式配置 provider + API key）
     setup_parser = subparsers.add_parser("setup", help="交互式配置 API provider 和密钥")
-    setup_parser.add_argument("--provider", dest="provider_choice", choices=["1", "2", "3", "4"],
-                              help="选择视频 provider: 1=Seedance, 2=Kling官方, 3=Kling(fal), 4=Veo3(compass)")
+    setup_parser.add_argument("--provider", dest="provider_choice", choices=["1", "2", "3"],
+                              help="选择视频 provider: 1=Seedance, 2=Kling官方, 3=Kling(fal)")
     setup_parser.add_argument("--set-key", nargs="+", metavar="KEY=VALUE",
                               help="设置 API key，格式: KEY=VALUE（可多个）")
 
@@ -5235,7 +5249,7 @@ def main():
     video_parser.add_argument("--output", "-o", help="输出文件路径")
     video_parser.add_argument("--provider", choices=["official", "fal", "piapi", "compass"], default=None,
                               help="API provider (默认自动选择; seedance: fal > piapi; veo3 仅支持 compass)")
-    video_parser.add_argument("--backend", "-b", choices=["kling", "kling-omni", "seedance", "veo3"], default="kling",
+    video_parser.add_argument("--backend", "-b", choices=["kling", "kling-omni", "seedance"], default="kling",
                               help="视频生成后端 (默认 kling; kling-omni 用于参考图; seedance 用于智能切镜; veo3 用于全局兜底)")
     video_parser.add_argument("--mode", "-m", choices=["std", "pro", "text_to_video", "first_last_frames", "omni_reference"], default="std",
                               help="生成模式 (Kling: std 或 pro; Seedance: text_to_video, first_last_frames, omni_reference)")
