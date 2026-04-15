@@ -67,10 +67,64 @@
 - `scene_name`：场景名称
 - `duration`：场景总时长 = 下属所有分镜时长之和
 - `narrative_goal`：主叙事目标
-- `spatial_setting`：空间设定
-- `time_state`：时间状态
+- `spatial_setting`：空间设定（**需精确化，见下方规范**）
+- `time_state`：时间状态（**需精确化，见下方规范**）
 - `visual_style`：视觉母风格
 - `shots[]`：分镜列表
+
+#### 字段精确化规范（一致性检测依赖）
+
+**time_state 精确化要求**：
+
+| 精确程度 | 示例 | 是否合格 |
+|---------|------|---------|
+| **精确** | "下午2-4点，柔和阳光"、"黄昏前一小时，golden hour暖光" | ✅ 合格 |
+| **笼统** | "白天"、"下午"、"白天" | ❌ 不合格（无法锁定光照） |
+
+**必须包含**：
+- 时间段：如"下午2-4点"、"黄昏前一小时"
+- 光照特征：如"柔和阳光"、"golden hour暖光"
+
+**spatial_setting 精确化要求**：
+
+| 精确程度 | 示例 | 是否合格 |
+|---------|------|---------|
+| **精确** | "垂杨柳（枝条细长下垂），石板路（青灰色），水榭亭台（飞檐翘角）" | ✅ 合格 |
+| **笼统** | "园林"、"树下"、"花园" | ❌ 不合格（无法锁定元素样式） |
+
+**必须包含**：
+- 关键元素样式：如"垂杨柳（枝条细长下垂）"
+- 建筑特征：如"水榭亭台（飞檐翘角）"
+
+#### 人物妆造锁定字段（elements.characters）
+
+```json
+{
+  "elements": {
+    "characters": [
+      {
+        "element_id": "Element_LinDaiyu",
+        "name": "林黛玉",
+        "name_en": "LinDaiyu",
+        "reference_images": ["materials/personas/lindaiyu_three_view.png"],
+        "visual_description": "古典美女...",
+        
+        // 新增锁定字段（一致性检测使用）
+        "locked_costume": "淡青绿色广袖长袍，米白色交领中衣，墨绿色宽腰封",
+        "locked_hairstyle": "古典高髻，两侧垂鬟",
+        "locked_makeup": "细长柳叶眉，淡粉唇色，白皙底妆",
+        "costume_scope": "scene_1, scene_2"  // 作用范围（可选）
+      }
+    ]
+  }
+}
+```
+
+**作用范围说明**：
+- `costume_scope` 指定人物妆造在哪些 scenes 内保持一致
+- 留空表示全局一致（所有 scenes）
+- 多个 scenes 用逗号分隔
+- 当需要换装时，在新的 scene 开始时更新锁定字段并设置新的 scope
 
 ### 分镜字段（Shot）
 

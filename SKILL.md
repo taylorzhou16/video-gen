@@ -750,6 +750,135 @@ storyboard["character_image_mapping"] = image_mapping
 
 ---
 
+## Phase 3.5: 一致性 Review（模型驱动）
+
+**位置**：Phase 3 分镜设计完成后，Phase 4 执行前
+
+**原则**：模型语义审查 → 自动修复 → 通知用户（无需用户确认）
+
+### 核心理念
+
+一致性问题需要**语义理解**，不是关键词匹配：
+- "垂杨柳" → "枝条下垂的柳树" → "老树" 这种渐进漂移，关键词检测抓不到
+- 模型能理解"黄昏"与"春日下午"的时间语义冲突
+- 模型能判断"古树"是否在语义上偏离了"垂杨柳"
+
+### Review 前必须阅读
+
+**执行一致性 Review 前，必须阅读以下规范**：
+
+```
+Read: reference/consistency-guide.md   # 一致性原则详细规范
+```
+
+### 审查原则概览
+
+| 原则 | 检测范围 | 核心要求 |
+|------|---------|---------|
+| **时间光照一致性** | 同一 scene 内 | 光照描述必须与 `time_state` 语义一致 |
+| **空间元素一致性** | 同一 scene 内 | 关键元素描述必须保持样式一致 |
+| **人物妆造一致性** | 同一 scene 内 | 服装/发型/妆容必须锁定 |
+| **image/video 匹配** | 同一 shot 内 | 两个 prompt 对关键元素描述必须一致 |
+| **跨 scene 连续性** | 连续的 scenes | 关键资产应保持视觉连续 |
+
+### Review 执行流程
+
+**Step 1：读取 storyboard.json**
+
+**Step 2：构建 Review Prompt**
+
+使用以下 prompt 结构进行语义审查：
+
+```
+你是一致性审查员，负责检查 storyboard.json 的跨镜头一致性。
+
+## 审查原则
+
+### 1. 时间光照一致性
+- 同一 scene 内所有 shot 的光照描述必须与 time_state 保持语义一致
+- time_state="春日下午" 时，禁止出现：黄昏、傍晚、日落、sunset、夜晚
+- 例外：如果剧情需要时间流逝，需在 narrative_goal 中说明
+
+### 2. 空间元素一致性
+- 同一 scene 内所有 shot 对关键元素的描述必须保持样式一致
+- spatial_setting 提到"垂杨柳"时，禁止漂移为：枯树、古树、老树
+- 不只要名称相同，还要样式描述一致（枝条形态、颜色等）
+
+### 3. 人物妆造一致性
+- 同一人物在同一 scene 内服装/发型必须锁定
+- 检查所有 shot 对人物的服装描述是否与 locked_costume 或 visual_description 一致
+- 跨 scene 换装需有剧情说明
+
+### 4. image/video 描述匹配
+- 同一 shot 的 image_prompt 和 video_prompt 对同一元素的描述必须一致
+- 特别检查：场景元素、光照描述、人物服装
+
+### 5. 跨 scene 资产连续性
+- 连续的 scenes（spatial_setting 相似、时间相近）应保持资产一致
+- 人物妆造默认锁定，除非有剧情换装说明
+
+## 审查任务
+
+请审查以下 storyboard.json，输出：
+
+1. **问题列表**（格式：`[scene_id/shot_id] 问题类型：具体描述`）
+2. **修复建议**（格式：`[scene_id/shot_id] 字段：原值 → 修复值`）
+
+如果有问题，直接给出修复后的完整字段内容，我会自动应用。
+
+---
+
+{storyboard.json 内容}
+```
+
+**Step 3：模型分析**
+
+模型分析所有 shots，输出问题列表和修复建议。
+
+**Step 4：自动应用修复**
+
+根据模型输出的修复建议，直接修改 storyboard.json 中对应的字段。
+
+**Step 5：保存并通知**
+
+保存修复后的 storyboard.json，向用户输出审查结果。
+
+### Review 输出格式
+
+```
+📋 一致性审查结果
+
+【发现问题】
+
+1. [scene_1/scene1_shot2] 时间不一致：
+   - time_state: "春日下午，柔和阳光"
+   - Lighting: "黄昏光线" → 应为 "春日下午柔和阳光"
+
+2. [scene_2/scene2_shot4] 空间漂移：
+   - spatial_setting: "垂杨柳树下"
+   - Scene 描述: "古树下" → 应为 "垂杨柳树下"
+
+【修复已应用】
+
+修复 scene_1/scene1_shot2 image_prompt Lighting 行：
+原值: "黄昏光线，低角度逆光"
+修复为: "春日下午柔和阳光，暖色调"
+
+修复 scene_2/scene2_shot4 image_prompt Scene 行：
+原值: "古树下，柳枝稀疏"
+修复为: "垂杨柳树下，枝条细长下垂"
+
+---
+
+共发现 N 个一致性问题，已自动修复 storyboard.json
+```
+
+### 无需用户确认
+
+发现明显不一致问题时直接修复，修复后通知用户即可。用户如需调整可手动修改 storyboard.json。
+
+---
+
 ## Phase 4: 执行生成
 
 根据 storyboard.json 执行视频生成。

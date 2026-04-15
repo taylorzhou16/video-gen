@@ -295,13 +295,22 @@ BACKEND_PROVIDER_KEYS = {
 
 
 def validate_storyboard(storyboard_path: str) -> Dict[str, Any]:
-    """��验 storyboard.json，返回 {valid, errors, warnings}"""
+    """校验 storyboard.json，返回 {valid, errors, warnings}
+
+    执行顺序：
+    1. 一致性检测 + 自动修复（Phase 3.5）
+    2. 跨场景资产一致性检测
+    3. Schema 校验
+    """  
     errors = []
     warnings = []
 
     data = load_storyboard(storyboard_path)
     if data is None:
         return {"valid": False, "errors": [f"无法加载文件: {storyboard_path}"], "warnings": []}
+
+    # 一致性检测已迁移为模型驱动的语义 review（Phase 3.5）
+    #详见 SKILL.md Phase 3.5 和 reference/consistency-guide.md
 
     # --- Schema basics ---
     if "scenes" not in data or not isinstance(data.get("scenes"), list):
