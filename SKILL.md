@@ -346,7 +346,24 @@ for persona_id in manager.list_personas_without_reference():
     ask_user_for_reference(persona_id)
 ```
 
-**询问内容**（每个无参考图的角色）：
+**项目类型判断**（决定参考图格式）：
+
+| 项目类型 | 参考图格式 | 说明 |
+|---------|-----------|------|
+| **虚构故事/短剧** | 三视图（正面+侧面+背面） | 多视角保证角色一致性 |
+| 其他类型（Vlog/广告片/MV） | 单张参考图 | 保持现有流程 |
+
+**询问内容（虚构故事/短剧类型）**：
+
+> **角色「{name}」需要参考图**
+>
+> 请选择参考图来源：
+> - **A. AI生成人物参考图**（推荐，自动生成三视图格式：正面+侧面+背面）
+> - **B. 上传照片并生成参考图**（基于用户照片生成三视图，保持原有容貌）
+> - **C. 上传单张参考图**（不推荐，角色一致性可能降低）
+> - **D. 接受纯文字生成**（角色外貌可能在不同镜头中不一致）
+
+**询问内容（其他类型）**：
 
 > **角色「{name}」需要参考图**
 >
@@ -357,12 +374,56 @@ for persona_id in manager.list_personas_without_reference():
 
 **选择后处理**：
 
-**A. AI生成**（根据 visual_style 决定画风）：
+#### 虚构故事/短剧类型：三视图格式
+
+**A. AI生成三视图**（根据 visual_style 决定画风）：
+
+详见 [reference/prompt-guide.md](reference/prompt-guide.md) → 「三视图人物参考图 Prompt」
+
 ```python
 # 读取 visual_style
 visual_style = creative.get("visual_style", "realistic")
 
-# 根据画风生成对应风格的参考图
+# 使用三视图 prompt 模板
+if visual_style == "anime":
+    prompt = anime_three_view_template.format(...)
+else:  # realistic
+    prompt = realistic_three_view_template.format(...)
+
+python video_gen_tools.py image \
+  --prompt "{三视图 prompt}" \
+  --output materials/personas/{name}_three_view.png
+
+# 更新 personas.json
+manager.update_reference_image(persona_id, "materials/personas/{name}_three_view.png")
+```
+
+**B. 上传照片并生成三视图**：
+- 请用户上传照片
+- 使用 `--reference` 参数传入用户照片
+- Prompt 强调保持原有容貌（详见 prompt-guide.md）
+```python
+python video_gen_tools.py image \
+  --prompt "A three-view reference sheet preserving exact facial features from reference photo..." \
+  --reference {用户照片路径} \
+  --output materials/personas/{name}_three_view.png
+```
+
+**C. 上传单张参考图**（不推荐）：
+- 请用户上传图片
+- 保存到 `materials/personas/{name}_ref.{ext}`
+- 记录警告：角色一致性可能降低
+
+**D. 纯文字**：
+- 记录警告到 `creative/decision_log`
+- 后续 Phase 3 将**强制生成分镜图**
+
+#### 其他类型：单张参考图格式
+
+**A. AI生成**（根据 visual_style 决定画风）：
+```python
+visual_style = creative.get("visual_style", "realistic")
+
 if visual_style == "anime":
     style_suffix = "anime style, 2D animation, vibrant colors"
 else:  # realistic
@@ -372,7 +433,6 @@ python video_gen_tools.py image \
   --prompt "{角色外貌描述}，{style_suffix}，正面半身照，纯色背景，高清肖像" \
   --output materials/personas/{name}_ref.png
 
-# 更新 personas.json
 manager.update_reference_image(persona_id, "materials/personas/{name}_ref.png")
 ```
 
@@ -383,12 +443,11 @@ manager.update_reference_image(persona_id, "materials/personas/{name}_ref.png")
 
 **C. 纯文字**：
 - 记录警告到 `creative/decision_log`
-- 后续 Phase 3 将**强制生成分镜图**，然后使用 img2video 或 reference2video
 
 **关键规则**：
-- **必须生成参考图**：角色需要在**多个镜头**中出现时
-- **可用 text2video**：单一场景出现、纯风景、用户明确接受外貌波动
+- **虚构故事/短剧必须使用三视图**：角色在多镜头中出现，需多视角保证一致性
 - **AI 生成参考图时必须遵循 visual_style**：anime 风格或 realistic 风格
+- **后续流程无需改动**：分镜设计、视频生成时传入的就是三视图本身
 
 ---
 

@@ -408,6 +408,140 @@ python video_gen_tools.py tts \
 
 ---
 
+## 三视图人物参考图 Prompt（虚构故事/短剧专用）
+
+**触发条件**：仅虚构故事/短剧类型项目使用，其他类型保持单张参考图。
+
+**核心概念**：三视图就是「人物参考图」本身，一张图包含正面 + 四分之三侧面 + 背面四分之三视角。后续分镜设计、视频生成时直接传入此三视图。
+
+### 结构要素（按顺序）
+
+1. **主体定义** — 三视图全身角色参考图
+2. **风格锚点** — 电影风格参照（真人写实/动漫）
+3. **构图布局** — 三图并排（正面/四分之三侧/背面四分之三）
+4. **人物细节** — 体态、面部、发型、服饰（分层描写）
+5. **光照设计** — 主光、轮廓光、阴影
+6. **调色方案** — 颜色量化
+7. **渲染精度** — 微观材质
+8. **情绪收尾** — 隐喻表达
+
+### 真人写实模板（visual_style = realistic）
+
+```
+A three-view full-body character reference sheet of {角色描述}，
+PHOTOREALISTIC real human style. NOT ANIME, NOT CARTOON, NOT ILLUSTRATION.
+Inspired by cinematic realism with classical portrait aesthetic.
+
+The sheet presents three medium-to-wide shots arranged side by side on a clean neutral backdrop:
+front view, three-quarter view, and rear three-quarter view — each capturing the complete figure
+from head to toe, ensuring no part of the silhouette is cropped.
+
+{角色体态描述}，{姿态描述}
+{面部细节描述}
+{发型描述}
+{服饰分层描述}
+
+Lighting: {光照描述}
+Color grading: {调色描述}
+Fine photorealistic rendering: {材质细节}
+Mood: {情绪关键词}
+
+Style: PHOTOREALISTIC, real human actress/actor, actual skin texture, cinematic film grain,
+shallow depth of field, clean neutral backdrop, 16:9 aspect ratio for three-view layout
+```
+
+**完整示例（真人写实）**：
+
+```
+A three-view full-body character reference sheet of a young Chinese woman named Xiaomei,
+PHOTOREALISTIC real human style. NOT ANIME, NOT CARTOON, NOT ILLUSTRATION.
+Inspired by Zhang Yimou's cinematic realism with classical Tang-Song portrait aesthetic.
+
+The sheet presents three medium-to-wide shots arranged side by side on a clean neutral backdrop:
+front view, three-quarter view, and rear three-quarter view — each capturing the complete figure
+from hairpin to embroidered hem, ensuring no part of the costume silhouette is cropped.
+
+The character is a young woman, late teens, slender and ethereal in physique — waist narrow,
+posture elegant with shoulders slightly inward. Face: porcelain-pale skin with soft undertone;
+softly arched brows; large, liquid eyes; delicately sculpted nose; faintly compressed lips.
+Her jet-black hair is swept into an elegant classical Chinese updo secured with a jade hairpin,
+with two loose tendrils framing her temples.
+
+Costume: a layered Hanfu ensemble — fitted inner robe in soft blush pink with embroidered cuffs,
+beneath a flowing outer robe in pale celadon green with ribbon ties at waist and draped sleeves.
+Fabric rendered as weightless gossamer silk with subtle sheen.
+
+Lighting: soft diffused overcast natural light from high-left key, thin cool rim light outlining silhouette
+Color grading: pale celadon and blush rose dominate 80% of palette, warm ivory for skin
+Fine photorealistic rendering: individual silk thread texture, hair-strand detail, subtle skin pore depth
+Mood: poetic vulnerability, classical feminine elegance
+
+Style: PHOTOREALISTIC, real human actress, actual skin texture, cinematic film grain,
+shallow depth of field, clean neutral backdrop, 16:9 aspect ratio for three-view layout
+```
+
+### 动漫风格模板（visual_style = anime）
+
+```
+A three-view full-body character reference sheet of {角色描述}，
+Anime style 2D animation character design sheet.
+
+Three poses arranged side by side on a clean backdrop:
+front view, three-quarter view, and rear three-quarter view — full body from head to toe.
+
+{角色体态描述}
+{面部特征（动漫风格）}
+{发型描述}
+{服饰描述}
+
+Style: Anime style, 2D animation, cel shading, vibrant colors, clean lines,
+character design sheet format, white/neutral backdrop
+```
+
+**完整示例（动漫风格）**：
+
+```
+A three-view full-body character reference sheet of a young girl named Sakura,
+Anime style 2D animation character design sheet.
+
+Three poses arranged side by side on a clean backdrop:
+front view, three-quarter view, and rear three-quarter view — full body from head to toe.
+
+The character is a teenage girl, petite and energetic in physique — lively posture,
+bright expressive eyes with characteristic anime sparkle, small nose, cheerful smile.
+Pink hair styled in twin braids with ribbon hair accessories, bangs framing forehead.
+
+Costume: school uniform — white blouse with sailor collar, navy blue skirt with pleats,
+white knee-high socks, brown loafers. Clean crisp fabric lines.
+
+Style: Anime style, 2D animation, cel shading, vibrant colors, clean lines,
+character design sheet format, white backdrop, consistent proportions across all three views
+```
+
+### 基于用户上传照片生成三视图
+
+当用户提供人物照片作为参考时，使用 `--reference` 参数传入用户照片，prompt 需强调保持原有容貌：
+
+```
+A three-view full-body character reference sheet preserving the exact facial features,
+body proportions, and skin tone from the reference photo.
+
+PHOTOREALISTIC real human style. NOT ANIME, NOT CARTOON, NOT ILLUSTRATION.
+
+The sheet presents three medium-to-wide shots arranged side by side on a clean neutral backdrop:
+front view, three-quarter view, and rear three-quarter view — each capturing the complete figure
+from head to toe.
+
+IMPORTANT: Preserve exact facial identity from reference — same face shape, same eye shape,
+same nose, same lip shape, same skin tone, same body proportions. Only adjust posture and
+add simple costume/attire suitable for the character concept.
+
+Lighting: soft diffused studio lighting, clean neutral backdrop
+Style: PHOTOREALISTIC, real human, identity-preserving, 16:9 aspect ratio
+```
+
+---
+
 ## 附录：模板速查
 
 ### Image Prompt 模板（Omni分镜图，realistic）
