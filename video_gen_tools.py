@@ -165,14 +165,16 @@ class Config:
         config = cls._get_config()
         return config.get(key, os.getenv(key, default))
 
-    # Vidu (Yunwu) API
+    # Vidu (已废弃，仅保留向后兼容)
+    VIDU_MODEL: str = os.getenv("VIDU_MODEL", "viduq3-pro")
+    VIDU_RESOLUTION: str = os.getenv("VIDU_RESOLUTION", "720p")
+
+    # Yunwu API (已废弃，仅保留向后兼容)
     @property
     def YUNWU_API_KEY(self) -> str:
         return self.get("YUNWU_API_KEY", "")
 
     YUNWU_BASE_URL: str = os.getenv("YUNWU_BASE_URL", "https://yunwu.ai")
-    VIDU_MODEL: str = os.getenv("VIDU_MODEL", "viduq3-pro")
-    VIDU_RESOLUTION: str = os.getenv("VIDU_RESOLUTION", "720p")
 
     # Suno API
     @property
@@ -192,13 +194,6 @@ class Config:
         return self.get("VOLCENGINE_TTS_ACCESS_TOKEN", "")
 
     VOLCENGINE_TTS_CLUSTER: str = os.getenv("VOLCENGINE_TTS_CLUSTER", "volcano_tts")
-
-    # Gemini Image（通过 Yunwu API，共用 YUNWU_API_KEY）
-    @property
-    def GEMINI_API_KEY(self) -> str:
-        return self.get("YUNWU_API_KEY", "")
-
-    GEMINI_IMAGE_URL: str = "https://yunwu.ai/v1beta/models/gemini-3.1-flash-image-preview:generateContent"
 
     # Migoo LLM API
     @property
@@ -3568,10 +3563,23 @@ def get_video_duration(video_path: str) -> float:
     return float(result.stdout.strip())
 
 
-# ============== Gemini 图片生成（通过 Yunwu API）==============
+# ============== Gemini 图片生成（已废弃）==============
 
 class ImageClient:
-    """Gemini 图片生成客户端（通过 Yunwu API）"""
+    """
+    Gemini 图片生成客户端（通过 Yunwu API）
+
+    .. deprecated::
+        Yunwu Image 已废弃，不再支持。请使用 MigooImageClient 或 FalImageClient。
+    """
+
+    def __init__(self):
+        import warnings
+        warnings.warn(
+            "ImageClient 已废弃，请使用 MigooImageClient 或 FalImageClient",
+            DeprecationWarning,
+            stacklevel=2
+        )
 
     STYLE_PRESETS = {
         "cinematic": "cinematic style, film grain, dramatic lighting, movie still",
@@ -3668,21 +3676,16 @@ class ImageClient:
             return {"success": False, "error": str(e)}
 
 
+# ============== Gemini 图片生成（fal.ai 兜底）==============
+
+
 class FalImageClient:
     """
     Gemini 图片生成客户端（通过 fal.ai API）
 
-    .. deprecated::
-        Fal Image 已废弃，不再支持。请使用 MigooImageClient（需要 MIGOO_API_KEY）。
+    作为 migoo 的兜底选项，当 MIGOO_API_KEY 未配置时可用。
+    需要 FAL_API_KEY。
     """
-
-    def __init__(self):
-        import warnings
-        warnings.warn(
-            "FalImageClient 已废弃，请使用 MigooImageClient",
-            DeprecationWarning,
-            stacklevel=2
-        )
 
     FAL_IMAGE_URL = "https://fal.run/fal-ai/gemini-3.1-flash-image-preview"
     FAL_IMAGE_EDIT_URL = "https://fal.run/fal-ai/gemini-3.1-flash-image-preview/edit"
@@ -3696,6 +3699,10 @@ class FalImageClient:
 
     # fal 支持的 aspect_ratio
     ASPECT_RATIOS = ["auto", "21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16", "4:1", "1:4", "8:1", "1:8"]
+
+    def __init__(self):
+        import httpx
+        self.client = httpx.AsyncClient(timeout=120.0)
 
     async def generate(
         self,
@@ -4921,16 +4928,19 @@ async def cmd_tts(args):
 
 async def cmd_image(args):
     """图片生成命令"""
-    # Provider 自动选择逻辑
+    # Provider 自动选择逻辑（新优先级：migoo > fal）
     provider = getattr(args, 'provider', None)
     if provider is None:
-        # 优先级：migoo → yunwu
         if Config.MIGOO_API_KEY:
             provider = 'migoo'
-        elif Config.GEMINI_API_KEY:  # GEMINI_API_KEY 实际上是 YUNWU_API_KEY
-            provider = 'yunwu'
+        elif Config.FAL_API_KEY:
+            provider = 'fal'
         else:
             provider = 'migoo'  # 默认，会报错提示配置
+
+    # yunwu 显式指定时警告但向后兼容
+    if provider == 'yunwu':
+        logger.warning("⚠️ yunwu provider 已废弃，建议使用 migoo 或 fal")
 
     logger.info(f"🔧 使用 provider: {provider}")
 
@@ -4950,7 +4960,7 @@ async def cmd_image(args):
             print(json.dumps({
                 "success": False,
                 "error": "MIGOO_API_KEY 未配置",
-                "hint": "请在 config.json 中添加 MIGOO_API_KEY"
+                "hint": "请在 config.json 中添加 MIGOO_API_KEY，或使用 --provider fal"
             }, indent=2, ensure_ascii=False))
             return 1
 
@@ -4963,18 +4973,17 @@ async def cmd_image(args):
             reference_images=args.reference
         )
 
-    # yunwu provider (Gemini via Yunwu)
-    else:
-        if not Config.GEMINI_API_KEY:
+    # fal provider (兜底)
+    elif provider == 'fal':
+        if not Config.FAL_API_KEY:
             print(json.dumps({
                 "success": False,
-                "error": "YUNWU_API_KEY 未配置（用于 Gemini 图片生成）",
-                "hint": "请设置环境变量: export YUNWU_API_KEY='your-api-key'",
-                "get_key": "访问 https://yunwu.ai 注册获取 API key"
+                "error": "FAL_API_KEY 未配置",
+                "hint": "请在 config.json 中添加 FAL_API_KEY"
             }, indent=2, ensure_ascii=False))
             return 1
 
-        client = ImageClient()
+        client = FalImageClient()
         result = await client.generate(
             prompt=args.prompt,
             output=args.output,
@@ -4982,6 +4991,20 @@ async def cmd_image(args):
             aspect_ratio=aspect_ratio,
             reference_images=args.reference
         )
+
+    # yunwu provider (已废弃，向后兼容)
+    else:
+        logger.warning("⚠️ yunwu provider 已废弃，请配置 MIGOO_API_KEY 或 FAL_API_KEY")
+        print(json.dumps({
+            "success": False,
+            "error": "Yunwu provider 已废弃",
+            "hint": "请使用 --provider migoo 或 --provider fal",
+            "providers": {
+                "migoo": {"key": "MIGOO_API_KEY", "priority": 1},
+                "fal": {"key": "FAL_API_KEY", "priority": 2}
+            }
+        }, indent=2, ensure_ascii=False))
+        return 1
 
     if result.get("success"):
         print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -5154,8 +5177,9 @@ async def cmd_check(args):
         },
         "YUNWU_API_KEY": {
             "value": Config.YUNWU_API_KEY,
-            "purpose": "Vidu 视频生成 + Gemini 图片生成",
-            "get_key": "https://yunwu.ai"
+            "purpose": "已废弃（Vidu/Yunwu 视频生成）",
+            "get_key": "https://yunwu.ai",
+            "deprecated": True
         },
         "KLING_ACCESS_KEY": {
             "value": Config.KLING_ACCESS_KEY,
@@ -5321,8 +5345,8 @@ def main():
     image_parser.add_argument("--aspect-ratio", "-a", default=None, help="宽高比")
     image_parser.add_argument("--storyboard", help="storyboard.json 路径，自动读取 aspect_ratio")
     image_parser.add_argument("--reference", "-r", nargs="+", help="参考图路径（支持多个，重要人物放后面）")
-    image_parser.add_argument("--provider", choices=["migoo", "yunwu"], default=None,
-                              help="API provider (默认自动选择: migoo 优先)")
+    image_parser.add_argument("--provider", choices=["migoo", "fal"], default=None,
+                              help="API provider (默认自动选择: migoo > fal)")
 
     # vision 子命令（内置多模态分析）
     vision_parser = subparsers.add_parser("vision", help="分析图片内容")
