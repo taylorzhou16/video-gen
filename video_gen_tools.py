@@ -3638,11 +3638,11 @@ class ImageClient:
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
-                    Config.GEMINI_IMAGE_URL,
+                    f"{Config.YUNWU_BASE_URL}/v1beta/models/gemini-3.1-flash-image-preview:generateContent",
                     json=payload,
                     headers={
                         "Content-Type": "application/json",
-                        "x-goog-api-key": Config.GEMINI_API_KEY,
+                        "x-goog-api-key": Config.YUNWU_API_KEY,
                     }
                 )
                 response.raise_for_status()
@@ -3699,10 +3699,6 @@ class FalImageClient:
 
     # fal 支持的 aspect_ratio
     ASPECT_RATIOS = ["auto", "21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16", "4:1", "1:4", "8:1", "1:8"]
-
-    def __init__(self):
-        import httpx
-        self.client = httpx.AsyncClient(timeout=120.0)
 
     async def generate(
         self,
@@ -4928,7 +4924,7 @@ async def cmd_tts(args):
 
 async def cmd_image(args):
     """图片生成命令"""
-    # Provider 自动选择逻辑（新优先级：migoo > fal）
+    # Provider 自动选择逻辑（优先级：migoo > fal）
     provider = getattr(args, 'provider', None)
     if provider is None:
         if Config.MIGOO_API_KEY:
@@ -4937,10 +4933,6 @@ async def cmd_image(args):
             provider = 'fal'
         else:
             provider = 'migoo'  # 默认，会报错提示配置
-
-    # yunwu 显式指定时警告但向后兼容
-    if provider == 'yunwu':
-        logger.warning("⚠️ yunwu provider 已废弃，建议使用 migoo 或 fal")
 
     logger.info(f"🔧 使用 provider: {provider}")
 
@@ -4992,17 +4984,12 @@ async def cmd_image(args):
             reference_images=args.reference
         )
 
-    # yunwu provider (已废弃，向后兼容)
     else:
-        logger.warning("⚠️ yunwu provider 已废弃，请配置 MIGOO_API_KEY 或 FAL_API_KEY")
+        # 理论上不可达（argparse choices 已限制）
         print(json.dumps({
             "success": False,
-            "error": "Yunwu provider 已废弃",
-            "hint": "请使用 --provider migoo 或 --provider fal",
-            "providers": {
-                "migoo": {"key": "MIGOO_API_KEY", "priority": 1},
-                "fal": {"key": "FAL_API_KEY", "priority": 2}
-            }
+            "error": f"未知的 provider: {provider}",
+            "hint": "请使用 --provider migoo 或 --provider fal"
         }, indent=2, ensure_ascii=False))
         return 1
 
@@ -5210,7 +5197,8 @@ async def cmd_check(args):
             "set": is_set,
             "masked_value": masked,
             "purpose": info["purpose"],
-            "get_key_url": info["get_key"]
+            "get_key_url": info["get_key"],
+            "deprecated": info.get("deprecated", False)
         }
 
     # 检查是否至少有一个视频 provider 可用
