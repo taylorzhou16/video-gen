@@ -732,3 +732,5 @@ export YUNWU_API_KEY="your-yunwu-api-key"  # 备用
 ## 📄 License
 
 MIT
+
+chuyue responsible of aftereffect optimisation
